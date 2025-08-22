@@ -5,4 +5,4 @@ python-dotenv==1.0.0
 gunicorn==21.2.0
 readability-lxml==0.8.1
 beautifulsoup4==4.12.3
-lxml==5.2.2
+lxml[html_clean]==5.2.2
