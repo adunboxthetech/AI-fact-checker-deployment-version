@@ -6,8 +6,6 @@ from dotenv import load_dotenv
 import time
 from urllib.parse import urlparse
 import re
-from readability import Document
-from bs4 import BeautifulSoup
 
 # Load environment variables
 try:
@@ -147,7 +145,7 @@ def is_valid_url(url: str) -> bool:
         return False
 
 def extract_text_from_url(url: str) -> dict:
-    """Fetch a URL and extract main article text using readability and BeautifulSoup."""
+    """Fetch a URL and extract main article text using simple text extraction."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -156,24 +154,29 @@ def extract_text_from_url(url: str) -> dict:
         )
     }
     
-    resp = requests.get(url, headers=headers, timeout=12)
-    if resp.status_code != 200:
-        raise ValueError(f"Failed to fetch URL (status {resp.status_code})")
-    
-    html = resp.text
-    doc = Document(html)
-    title = doc.short_title()
-    summary_html = doc.summary()
-    soup = BeautifulSoup(summary_html, "lxml")
-    main_text = soup.get_text(separator=" ", strip=True)
-
-    if len(main_text) > 12000:
-        main_text = main_text[:12000] + "…"
-
-    if not main_text or len(main_text) < 100:
-        raise ValueError("Could not extract meaningful text from the provided URL")
-
-    return {"title": title, "text": main_text}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        if resp.status_code != 200:
+            raise ValueError(f"Failed to fetch URL (status {resp.status_code})")
+        
+        # Simple text extraction - just get the text content
+        text = resp.text
+        
+        # Basic HTML tag removal
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Limit length
+        if len(text) > 8000:
+            text = text[:8000] + "…"
+        
+        if not text or len(text) < 100:
+            raise ValueError("Could not extract meaningful text from the provided URL")
+        
+        return {"title": "Extracted Content", "text": text}
+        
+    except Exception as e:
+        raise ValueError(f"Error extracting content: {str(e)}")
 
 def handle_fact_check(data):
     """Handle fact-check request"""
