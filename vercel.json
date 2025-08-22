@@ -8,8 +8,36 @@
   ],
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "/api/(.*)",
       "dest": "wsgi.py"
+    },
+    {
+      "src": "/fact-check",
+      "dest": "wsgi.py"
+    },
+    {
+      "src": "/fact-check-image",
+      "dest": "wsgi.py"
+    },
+    {
+      "src": "/health",
+      "dest": "wsgi.py"
+    },
+    {
+      "src": "/style.css",
+      "dest": "/style.css"
+    },
+    {
+      "src": "/script.js",
+      "dest": "/script.js"
+    },
+    {
+      "src": "/assets/(.*)",
+      "dest": "/assets/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }
