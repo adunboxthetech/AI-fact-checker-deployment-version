@@ -10,8 +10,11 @@ import re
 from readability import Document
 from bs4 import BeautifulSoup
 
-# Load environment variables
-load_dotenv()
+# Load environment variables (only if .env file exists)
+try:
+    load_dotenv()
+except:
+    pass  # Continue without .env file
 
 app = Flask(__name__)
 CORS(app)
@@ -19,6 +22,10 @@ CORS(app)
 # Perplexity API configuration
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+
+# Validate API key is available
+if not PERPLEXITY_API_KEY:
+    print("WARNING: PERPLEXITY_API_KEY environment variable is not set!")
 
 class FactChecker:
     def __init__(self):
@@ -133,8 +140,12 @@ class FactChecker:
                 "sources": []
             }
 
-# Initialize fact checker
-fact_checker = FactChecker()
+# Initialize fact checker with error handling
+try:
+    fact_checker = FactChecker()
+except Exception as e:
+    print(f"Error initializing FactChecker: {e}")
+    fact_checker = None
 
 
 def is_valid_url(url: str) -> bool:
@@ -238,11 +249,20 @@ def home():
 
 @app.route('/health')
 def health_check():
-    return jsonify({"status": "healthy", "timestamp": time.time()})
+    return jsonify({
+        "status": "healthy", 
+        "timestamp": time.time(),
+        "api_key_set": bool(PERPLEXITY_API_KEY),
+        "fact_checker_initialized": fact_checker is not None
+    })
 
 @app.route('/fact-check', methods=['POST'])
 def fact_check():
     try:
+        # Check if fact_checker is properly initialized
+        if fact_checker is None:
+            return jsonify({"error": "Fact checker not properly initialized. Check environment variables."}), 500
+            
         data = request.get_json()
         if not data:
             return jsonify({"error": "No input provided"}), 400
@@ -296,6 +316,10 @@ def fact_check():
 @app.route('/fact-check-image', methods=['POST'])
 def fact_check_image():
     try:
+        # Check if fact_checker is properly initialized
+        if fact_checker is None:
+            return jsonify({"error": "Fact checker not properly initialized. Check environment variables."}), 500
+            
         data = request.get_json()
         if not data:
             return jsonify({"error": "No input provided"}), 400

@@ -5,12 +5,15 @@
 2. Make sure you have a Vercel account
 
 ## Environment Variables
-Before deploying, you need to set up your environment variables in Vercel:
+**CRITICAL**: You MUST set up your environment variables in Vercel before deployment:
 
 1. Go to your Vercel dashboard
 2. Create a new project
 3. In the project settings, go to "Environment Variables"
-4. Add your `PERPLEXITY_API_KEY` variable
+4. Add your `PERPLEXITY_API_KEY` variable with your actual Perplexity API key
+5. Make sure to set it for all environments (Production, Preview, Development)
+
+**If you don't set this environment variable, your deployment will fail with a 500 error!**
 
 ## Deployment Steps
 
@@ -44,3 +47,15 @@ Once deployed, test your API endpoints:
 ```bash
 curl https://your-vercel-url.vercel.app/health
 ```
+
+## Troubleshooting
+
+### If you get a 500 error:
+1. **Check environment variables**: Make sure `PERPLEXITY_API_KEY` is set in Vercel dashboard
+2. **Check the health endpoint**: Visit `/health` to see if the API key is properly set
+3. **Check Vercel logs**: Go to your project dashboard → Functions → View Function Logs
+
+### Common issues:
+- **Missing API key**: The most common cause of 500 errors
+- **Invalid API key**: Make sure your Perplexity API key is valid
+- **Timeout issues**: The function timeout is set to 30 seconds in `vercel.json`
