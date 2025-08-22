@@ -1,31 +1,23 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from http.server import BaseHTTPRequestHandler
+import json
 import requests
 import os
 from dotenv import load_dotenv
-import json
 import time
 from urllib.parse import urlparse
 import re
 from readability import Document
 from bs4 import BeautifulSoup
 
-# Load environment variables (only if .env file exists)
+# Load environment variables
 try:
     load_dotenv()
 except:
-    pass  # Continue without .env file
-
-app = Flask(__name__)
-CORS(app)
+    pass
 
 # Perplexity API configuration
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
-
-# Validate API key is available
-if not PERPLEXITY_API_KEY:
-    print("WARNING: PERPLEXITY_API_KEY environment variable is not set!")
 
 class FactChecker:
     def __init__(self):
@@ -140,7 +132,7 @@ class FactChecker:
                 "sources": []
             }
 
-# Initialize fact checker with error handling
+# Initialize fact checker
 try:
     fact_checker = FactChecker()
 except Exception as e:
@@ -155,10 +147,7 @@ def is_valid_url(url: str) -> bool:
         return False
 
 def extract_text_from_url(url: str) -> dict:
-    """Fetch a URL and extract main article text using readability and BeautifulSoup.
-
-    Returns a dict: { 'title': str | None, 'text': str }
-    """
+    """Fetch a URL and extract main article text using readability and BeautifulSoup."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -166,69 +155,17 @@ def extract_text_from_url(url: str) -> dict:
             "Chrome/124.0.0.0 Safari/537.36"
         )
     }
-    # Special-case X/Twitter tweets using syndication endpoint to avoid JS/login walls
-    parsed = urlparse(url)
-    if parsed.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com", "m.twitter.com"} and "/status/" in parsed.path:
-        m = re.search(r"/status/(\d+)", parsed.path)
-        if m:
-            tweet_id = m.group(1)
-            tw = requests.get(
-                "https://cdn.syndication.twimg.com/widgets/tweet",
-                params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
-            )
-            if tw.status_code == 200:
-                try:
-                    data = tw.json()
-                    text = data.get("text") or data.get("full_text") or data.get("i18n_text") or ""
-                    if not text and data.get("body_html"):
-                        text = BeautifulSoup(data["body_html"], "lxml").get_text(" ", strip=True)
-                    if text:
-                        user = data.get("user") or {}
-                        handle = user.get("screen_name")
-                        title = f"Tweet by @{handle}" if handle else "Tweet"
-                        return {"title": title, "text": text}
-                except Exception:
-                    pass
+    
     resp = requests.get(url, headers=headers, timeout=12)
     if resp.status_code != 200:
         raise ValueError(f"Failed to fetch URL (status {resp.status_code})")
-    content_type = resp.headers.get("Content-Type", "")
-    if "text/html" not in content_type:
-        raise ValueError("URL does not appear to be an HTML page")
-
+    
     html = resp.text
     doc = Document(html)
     title = doc.short_title()
     summary_html = doc.summary()
     soup = BeautifulSoup(summary_html, "lxml")
     main_text = soup.get_text(separator=" ", strip=True)
-
-    # Fallback to full page if readability extraction is too short
-    if len(main_text) < 300:
-        full_soup = BeautifulSoup(html, "lxml")
-        main_text = full_soup.get_text(separator=" ", strip=True)
-
-    # Clean and limit length to keep token usage reasonable
-    main_text = " ".join(main_text.split())
-
-    # If content appears boilerplate or is very short, try Jina Reader proxy to fetch readable content
-    boilerplate_markers = [
-        "enable javascript",
-        "javascript is not available",
-        "please enable cookies",
-        "sign in",
-        "you're being redirected",
-    ]
-    if len(main_text) < 200 or any(marker in main_text.lower() for marker in boilerplate_markers):
-        try:
-            # Preserve scheme, host, path, and query for Jina Reader
-            q = f"?{parsed.query}" if parsed.query else ""
-            wrapped = f"https://r.jina.ai/{parsed.scheme}://{parsed.netloc}{parsed.path}{q}"
-            jr = requests.get(wrapped, headers=headers, timeout=14)
-            if jr.status_code == 200 and len(jr.text.strip()) > 200:
-                main_text = " ".join(jr.text.split())
-        except Exception:
-            pass
 
     if len(main_text) > 12000:
         main_text = main_text[:12000] + "…"
@@ -238,33 +175,14 @@ def extract_text_from_url(url: str) -> dict:
 
     return {"title": title, "text": main_text}
 
-@app.route('/')
-def home():
-    return app.send_from_directory('..', 'index.html')
-
-@app.route('/<path:filename>')
-def serve_static(filename):
-    return app.send_from_directory('..', filename)
-
-@app.route('/health')
-def health_check():
-    return jsonify({
-        "status": "healthy", 
-        "timestamp": time.time(),
-        "api_key_set": bool(PERPLEXITY_API_KEY),
-        "fact_checker_initialized": fact_checker is not None
-    })
-
-@app.route('/fact-check', methods=['POST'])
-def fact_check():
+def handle_fact_check(data):
+    """Handle fact-check request"""
     try:
-        # Check if fact_checker is properly initialized
         if fact_checker is None:
-            return jsonify({"error": "Fact checker not properly initialized. Check environment variables."}), 500
+            return {"error": "Fact checker not properly initialized. Check environment variables."}, 500
             
-        data = request.get_json()
         if not data:
-            return jsonify({"error": "No input provided"}), 400
+            return {"error": "No input provided"}, 400
 
         input_text = None
         source_url = None
@@ -273,18 +191,18 @@ def fact_check():
         if 'url' in data and data['url']:
             candidate_url = str(data['url']).strip()
             if not is_valid_url(candidate_url):
-                return jsonify({"error": "Invalid URL. Only http(s) URLs are supported."}), 400
+                return {"error": "Invalid URL. Only http(s) URLs are supported."}, 400
             try:
                 extraction = extract_text_from_url(candidate_url)
                 input_text = extraction["text"]
                 source_url = candidate_url
             except Exception as e:
-                return jsonify({"error": f"Failed to extract content from URL: {str(e)}"}), 400
+                return {"error": f"Failed to extract content from URL: {str(e)}"}, 400
 
         # Fallback to raw text
         if input_text is None:
             if 'text' not in data or not str(data['text']).strip():
-                return jsonify({"error": "No text provided"}), 400
+                return {"error": "No text provided"}, 400
             input_text = str(data['text']).strip()
         
         # Extract claims from input text
@@ -300,32 +218,30 @@ def fact_check():
                     "result": fact_check_result
                 })
         
-        return jsonify({
+        return {
             "original_text": input_text,
             "claims_found": len(results),
             "fact_check_results": results,
             "timestamp": time.time(),
             "source_url": source_url
-        })
+        }
     
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}, 500
 
-@app.route('/fact-check-image', methods=['POST'])
-def fact_check_image():
+def handle_fact_check_image(data):
+    """Handle image fact-check request"""
     try:
-        # Check if fact_checker is properly initialized
         if fact_checker is None:
-            return jsonify({"error": "Fact checker not properly initialized. Check environment variables."}), 500
+            return {"error": "Fact checker not properly initialized. Check environment variables."}, 500
             
-        data = request.get_json()
         if not data:
-            return jsonify({"error": "No input provided"}), 400
+            return {"error": "No input provided"}, 400
 
         image_data_url = data.get('image_data_url')
         image_url = data.get('image_url')
         if not image_data_url and not image_url:
-            return jsonify({"error": "Provide image_data_url (data URI) or image_url"}), 400
+            return {"error": "Provide image_data_url (data URI) or image_url"}, 400
 
         # Build Perplexity multimodal prompt for claim extraction from image
         messages = [
@@ -345,14 +261,14 @@ def fact_check_image():
             messages[0]["content"].append({"type": "image_url", "image_url": image_url})
 
         payload = {
-            "model": "sonar-pro",  # supports vision per Perplexity docs
+            "model": "sonar-pro",
             "messages": messages,
             "max_tokens": 500,
         }
 
         sonar_resp = requests.post(PERPLEXITY_URL, headers=fact_checker.headers, json=payload, timeout=30)
         if sonar_resp.status_code != 200:
-            return jsonify({"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}), 500
+            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
 
         content = sonar_resp.json()['choices'][0]['message']['content']
         # Convert numbered list into claims
@@ -367,17 +283,93 @@ def fact_check_image():
                 fc = fact_checker.fact_check_claim(claim)
                 results.append({"claim": claim, "result": fc})
 
-        return jsonify({
+        return {
             "original_image": bool(image_data_url) and "data_url" or image_url,
             "claims_found": len(results),
             "fact_check_results": results,
             "timestamp": time.time(),
             "source_url": image_url or None
-        })
+        }
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return {"error": str(e)}, 500
 
-# Vercel serverless function handler
-def handler(request, context):
-    return app(request, context)
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/api/health':
+            response_data = {
+                "status": "healthy", 
+                "timestamp": time.time(),
+                "api_key_set": bool(PERPLEXITY_API_KEY),
+                "fact_checker_initialized": fact_checker is not None
+            }
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
+            self.wfile.write(json.dumps(response_data).encode())
+        else:
+            # Serve static files
+            try:
+                with open(f'..{self.path}', 'rb') as f:
+                    content = f.read()
+                
+                # Determine content type
+                if self.path.endswith('.html'):
+                    content_type = 'text/html'
+                elif self.path.endswith('.css'):
+                    content_type = 'text/css'
+                elif self.path.endswith('.js'):
+                    content_type = 'application/javascript'
+                elif self.path.endswith('.png'):
+                    content_type = 'image/png'
+                else:
+                    content_type = 'text/plain'
+                
+                self.send_response(200)
+                self.send_header('Content-type', content_type)
+                self.end_headers()
+                self.wfile.write(content)
+            except FileNotFoundError:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'File not found')
+    
+    def do_POST(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length)
+        
+        try:
+            data = json.loads(post_data.decode('utf-8'))
+        except json.JSONDecodeError:
+            self.send_response(400)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
+            return
+        
+        if self.path == '/api/fact-check':
+            response_data, status_code = handle_fact_check(data)
+        elif self.path == '/api/fact-check-image':
+            response_data, status_code = handle_fact_check_image(data)
+        else:
+            response_data = {"error": "Endpoint not found"}
+            status_code = 404
+        
+        self.send_response(status_code)
+        self.send_header('Content-type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
+        self.wfile.write(json.dumps(response_data).encode())
+    
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.end_headers()
