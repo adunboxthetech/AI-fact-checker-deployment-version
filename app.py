@@ -16,7 +16,7 @@ try:
 except:
     pass  # Continue without .env file
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='.', static_url_path='')
 CORS(app)
 
 # Perplexity API configuration
@@ -242,10 +242,7 @@ def extract_text_from_url(url: str) -> dict:
 
 @app.route('/')
 def home():
-    return jsonify({
-        "message": "AI Fact-Checker API is running!",
-        "endpoints": ["/fact-check", "/health"]
-    })
+    return app.send_static_file('index.html')
 
 @app.route('/health')
 def health_check():
@@ -381,3 +378,5 @@ def fact_check_image():
         return jsonify({"error": str(e)}), 500
 
 # Vercel deployment - app is served via wsgi.py
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)

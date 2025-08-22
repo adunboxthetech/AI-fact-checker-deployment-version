@@ -1,6 +1,6 @@
 class FactCheckerApp {
     constructor() {
-        this.apiUrl = '/api';   // if using Vercel serverless functions
+        this.apiUrl = '';   // Use relative paths for Flask app
         this.initializeElements();
         this.bindEvents();
         this.initializeTheme();

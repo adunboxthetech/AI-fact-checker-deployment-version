@@ -8,8 +8,20 @@
   ],
   "routes": [
     {
-      "src": "/(.*)",
+      "src": "/fact-check",
       "dest": "wsgi.py"
+    },
+    {
+      "src": "/fact-check-image",
+      "dest": "wsgi.py"
+    },
+    {
+      "src": "/health",
+      "dest": "wsgi.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
     }
   ]
 }
