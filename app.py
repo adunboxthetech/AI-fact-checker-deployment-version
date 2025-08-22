@@ -16,7 +16,7 @@ try:
 except:
     pass  # Continue without .env file
 
-app = Flask(__name__, static_folder='.', static_url_path='')
+app = Flask(__name__)
 CORS(app)
 
 # Perplexity API configuration
@@ -242,7 +242,11 @@ def extract_text_from_url(url: str) -> dict:
 
 @app.route('/')
 def home():
-    return app.send_static_file('index.html')
+    return app.send_from_directory('.', 'index.html')
+
+@app.route('/<path:filename>')
+def serve_static(filename):
+    return app.send_from_directory('.', filename)
 
 @app.route('/health')
 def health_check():
