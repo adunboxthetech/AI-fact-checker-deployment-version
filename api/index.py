@@ -351,9 +351,6 @@ def fact_check_image(image_data_url, image_url):
     }
     
     try:
-        print(f"DEBUG: Starting image analysis")
-        print(f"DEBUG: API Key present: {bool(PERPLEXITY_API_KEY)}")
-        
         # Build multimodal prompt for image analysis
         messages = [
             {
@@ -381,10 +378,6 @@ def fact_check_image(image_data_url, image_url):
         
         # First, extract claims from the image using multimodal model
         try:
-            print(f"DEBUG: Making API request to Perplexity")
-            print(f"DEBUG: Model: sonar-large-online")
-            print(f"DEBUG: Messages: {messages}")
-            
             response = requests.post(
                 PERPLEXITY_URL,
                 headers=headers,
@@ -396,17 +389,12 @@ def fact_check_image(image_data_url, image_url):
                 timeout=30
             )
             
-            print(f"DEBUG: Response status: {response.status_code}")
-            print(f"DEBUG: Response text: {response.text[:500]}...")
-            
             if response.status_code != 200:
                 # Log the error response for debugging
                 error_detail = f"HTTP {response.status_code}: {response.text}"
-                print(f"DEBUG: API Error: {error_detail}")
                 return {"error": f"Image analysis failed: {error_detail}"}, 500
                 
         except Exception as e:
-            print(f"DEBUG: Request Exception: {str(e)}")
             return {"error": f"Request failed: {str(e)}"}, 500
         
         content = response.json()['choices'][0]['message']['content']
@@ -541,18 +529,8 @@ class handler(BaseHTTPRequestHandler):
                 status_code = 400
             else:
                 try:
-                    # Add debugging info
-                    print(f"DEBUG: Image fact-check request received")
-                    print(f"DEBUG: image_data_url length: {len(image_data_url) if image_data_url else 0}")
-                    print(f"DEBUG: image_url: {image_url}")
-                    
                     response_data, status_code = fact_check_image(image_data_url, image_url)
-                    
-                    print(f"DEBUG: Response status: {status_code}")
-                    print(f"DEBUG: Response data: {response_data}")
-                    
                 except Exception as e:
-                    print(f"DEBUG: Exception in image fact-check: {str(e)}")
                     response_data = {"error": f"Image analysis failed: {str(e)}"}
                     status_code = 400
         else:
