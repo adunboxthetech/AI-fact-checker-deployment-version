@@ -267,11 +267,12 @@ class FactCheckerApp {
         const verdictClass = this.getVerdictClass(verdict);
         
         div.className = `claim-result ${verdictClass}`;
-        const sourcesHtml = this.renderSources(extractedSources);
         
         // Format the explanation nicely instead of showing raw JSON
         let explanation = result.result.explanation || 'No explanation provided';
         let extractedSources = result.result.sources || [];
+        
+        const sourcesHtml = this.renderSources(extractedSources);
         
         if (typeof explanation === 'string') {
             // Check if explanation contains JSON-like content
