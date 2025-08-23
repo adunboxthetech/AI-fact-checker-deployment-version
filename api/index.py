@@ -315,7 +315,7 @@ def extract_text_from_url(url):
         for line in lines:
             line = line.strip()
             # Skip lines that are clearly CSS/JS
-            if (line and len(line) > 20 and
+            if (line and len(line) > 10 and  # Reduced minimum line length
                 not re.match(r'^[.#][a-zA-Z0-9_-]+\s*\{', line) and  # CSS selectors
                 not re.match(r'^[a-zA-Z-]+\s*:\s*[^;]+;$', line) and  # CSS properties
                 not re.match(r'^function\s*\(', line) and  # JS functions
@@ -334,11 +334,22 @@ def extract_text_from_url(url):
         
         text = ' '.join(filtered_lines)
         
+        # If filtering removed too much content, use the original text
+        if len(text.strip()) < 20:
+            # Fallback to simpler cleaning
+            text = response.text
+            text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<[^>]+>', ' ', text)
+            text = re.sub(r'\s+', ' ', text).strip()
+            if len(text) > 8000:
+                text = text[:8000] + "…"
+        
         # Limit length
         if len(text) > 8000:
             text = text[:8000] + "…"
         
-        if not text or len(text) < 50:
+        if not text or len(text) < 20:  # Reduced minimum length requirement
             raise ValueError("Could not extract meaningful text from the provided URL")
         
         return text
@@ -543,7 +554,7 @@ class handler(BaseHTTPRequestHandler):
                         # Use provided text
                         response_data, status_code = fact_check_text(text)
                 except Exception as e:
-                    response_data = {"error": str(e)}
+                    response_data = {"error": f"Content extraction failed: {str(e)}"}
                     status_code = 400
         else:
             response_data = {"error": "Endpoint not found"}
