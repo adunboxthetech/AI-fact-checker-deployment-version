@@ -113,7 +113,32 @@ def extract_text_from_url(url):
                     if tweet_text and len(tweet_text) > 20:
                         return tweet_text
             
-            # Strategy 5: Look for any meaningful text that's not JavaScript/CSS
+            # Strategy 5: Try mobile version of the URL
+            try:
+                mobile_url = url.replace('x.com', 'mobile.twitter.com').replace('twitter.com', 'mobile.twitter.com')
+                mobile_response = requests.get(mobile_url, headers=headers, timeout=15)
+                if mobile_response.status_code == 200:
+                    mobile_content = mobile_response.text
+                    
+                    # Look for tweet text in mobile version
+                    mobile_patterns = [
+                        r'<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>',
+                        r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
+                        r'<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</p>'
+                    ]
+                    
+                    for pattern in mobile_patterns:
+                        match = re.search(pattern, mobile_content, re.DOTALL | re.IGNORECASE)
+                        if match:
+                            tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
+                            tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
+                            tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
+                            if tweet_text and len(tweet_text) > 20:
+                                return tweet_text
+            except:
+                pass
+            
+            # Strategy 6: Look for any meaningful text that's not JavaScript/CSS
             lines = content.split('\n')
             meaningful_lines = []
             for line in lines:
@@ -131,8 +156,8 @@ def extract_text_from_url(url):
             if meaningful_lines:
                 return ' '.join(meaningful_lines[:3])
             
-            # If all strategies fail, try to get the URL from the page and suggest using it
-            raise ValueError("Unable to extract tweet content from this Twitter/X URL. This is a common issue with social media sites that use JavaScript to load content dynamically.")
+            # If all strategies fail, provide a comprehensive error message
+            raise ValueError("Unable to extract tweet content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
         
         # General text extraction for other sites
         text = response.text
