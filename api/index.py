@@ -3,10 +3,41 @@ import json
 import requests
 import os
 import time
+import re
 
 # Perplexity API configuration
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+
+def extract_text_from_url(url):
+    """Extract text content from a URL"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            raise ValueError(f"Failed to fetch URL (status {response.status_code})")
+        
+        # Simple text extraction
+        text = response.text
+        
+        # Basic HTML tag removal
+        text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Limit length
+        if len(text) > 8000:
+            text = text[:8000] + "…"
+        
+        if not text or len(text) < 100:
+            raise ValueError("Could not extract meaningful text from the provided URL")
+        
+        return text
+        
+    except Exception as e:
+        raise ValueError(f"Error extracting content: {str(e)}")
 
 def fact_check_text(text):
     """Simple fact-check function"""
@@ -99,12 +130,28 @@ class handler(BaseHTTPRequestHandler):
             return
         
         if self.path == '/api/fact-check':
+            # Handle both text and URL inputs
             text = data.get('text', '')
-            if not text:
-                response_data = {"error": "No text provided"}
+            url = data.get('url', '')
+            
+            if not text and not url:
+                response_data = {"error": "No text or URL provided"}
                 status_code = 400
             else:
-                response_data, status_code = fact_check_text(text)
+                try:
+                    if url:
+                        # Extract text from URL
+                        extracted_text = extract_text_from_url(url)
+                        response_data, status_code = fact_check_text(extracted_text)
+                        # Add source URL to response
+                        if status_code == 200 and isinstance(response_data, dict):
+                            response_data['source_url'] = url
+                    else:
+                        # Use provided text
+                        response_data, status_code = fact_check_text(text)
+                except Exception as e:
+                    response_data = {"error": str(e)}
+                    status_code = 400
         else:
             response_data = {"error": "Endpoint not found"}
             status_code = 404
