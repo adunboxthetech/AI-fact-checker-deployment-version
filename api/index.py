@@ -74,6 +74,9 @@ def extract_text_from_url(url):
             
             if meaningful_lines:
                 return ' '.join(meaningful_lines[:3])  # Take first 3 meaningful lines
+            
+            # If all else fails for Twitter/X, provide a helpful message
+            raise ValueError("Unable to extract tweet content. Twitter/X content is dynamically loaded with JavaScript. Please copy and paste the tweet text directly instead of the URL.")
         
         # General text extraction
         text = response.text
