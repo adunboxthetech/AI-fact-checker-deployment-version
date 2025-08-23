@@ -94,6 +94,12 @@ body {
     height: 28px;
     object-fit: contain;
     display: block;
+    filter: invert(0); /* Default for dark mode */
+}
+
+/* Invert logo colors for light mode */
+[data-theme="light"] .brand-logo {
+    filter: invert(1);
 }
 
 .subtitle {
