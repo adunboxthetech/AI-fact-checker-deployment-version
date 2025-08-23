@@ -377,20 +377,25 @@ def fact_check_image(image_data_url, image_url):
             })
         
         # First, extract claims from the image using multimodal model
-        response = requests.post(
-            PERPLEXITY_URL,
-            headers=headers,
-            json={
-                "model": "llama-3.1-sonar-large-128k-online",
-                "messages": messages,
-                "max_tokens": 500
-            },
-            timeout=30
-        )
-        
-        if response.status_code != 200:
-            # If multimodal fails, try a different approach
-            return {"error": f"Image analysis failed: HTTP {response.status_code}"}, 500
+        try:
+            response = requests.post(
+                PERPLEXITY_URL,
+                headers=headers,
+                json={
+                    "model": "sonar-large-online",
+                    "messages": messages,
+                    "max_tokens": 500
+                },
+                timeout=30
+            )
+            
+            if response.status_code != 200:
+                # Log the error response for debugging
+                error_detail = f"HTTP {response.status_code}: {response.text}"
+                return {"error": f"Image analysis failed: {error_detail}"}, 500
+                
+        except Exception as e:
+            return {"error": f"Request failed: {str(e)}"}, 500
         
         content = response.json()['choices'][0]['message']['content']
         
