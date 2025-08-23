@@ -50,7 +50,7 @@ def fact_check_text(text):
     }
     
     prompt = f"""
-    Fact-check this text and provide a simple analysis:
+    Extract and fact-check all factual claims from this text. 
     
     Text: {text}
     
@@ -59,6 +59,8 @@ def fact_check_text(text):
     - confidence: 0-100
     - explanation: brief explanation
     - sources: list of URLs
+    
+    If no factual claims are found, return an empty array.
     """
     
     try:
@@ -68,7 +70,7 @@ def fact_check_text(text):
             json={
                 "model": "sonar-pro",
                 "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 300
+                "max_tokens": 500
             },
             timeout=30
         )
@@ -80,13 +82,33 @@ def fact_check_text(text):
             # Try to parse as JSON, fallback to simple response
             try:
                 parsed = json.loads(content)
-                return parsed, 200
-            except:
+                # Format for frontend: create fact_check_results array
+                fact_check_result = {
+                    "claim": text[:200] + "..." if len(text) > 200 else text,
+                    "result": parsed
+                }
                 return {
-                    "verdict": "ANALYSIS COMPLETE",
-                    "confidence": 75,
-                    "explanation": content,
-                    "sources": ["Perplexity Analysis"]
+                    "fact_check_results": [fact_check_result],
+                    "original_text": text,
+                    "claims_found": 1,
+                    "timestamp": time.time()
+                }, 200
+            except:
+                # Fallback response
+                fact_check_result = {
+                    "claim": text[:200] + "..." if len(text) > 200 else text,
+                    "result": {
+                        "verdict": "ANALYSIS COMPLETE",
+                        "confidence": 75,
+                        "explanation": content,
+                        "sources": ["Perplexity Analysis"]
+                    }
+                }
+                return {
+                    "fact_check_results": [fact_check_result],
+                    "original_text": text,
+                    "claims_found": 1,
+                    "timestamp": time.time()
                 }, 200
         else:
             return {"error": f"API request failed: {response.status_code}"}, 500
