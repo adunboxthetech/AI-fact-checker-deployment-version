@@ -24,7 +24,6 @@ def extract_text_from_url(url):
         if 'twitter.com' in url or 'x.com' in url:
             # Try to extract tweet content from meta tags
             content = response.text
-            import re
             
             # Look for meta description or og:description
             meta_patterns = [
