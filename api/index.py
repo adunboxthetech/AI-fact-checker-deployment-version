@@ -279,7 +279,6 @@ def fact_check_text(text):
                 # If the content looks like JSON but failed to parse, try to extract useful parts
                 if '"verdict"' in content and '"explanation"' in content:
                     # Try to extract key parts using regex
-                    import re
                     verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
                     confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
                     explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
