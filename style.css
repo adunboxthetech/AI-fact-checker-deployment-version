@@ -89,17 +89,27 @@ body {
     overflow: hidden;
 }
 
+.brand-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    background: transparent; /* Default for dark mode */
+    margin-right: 8px;
+}
+
 .brand-logo {
     width: 28px;
     height: 28px;
     object-fit: contain;
     display: block;
-    filter: invert(0); /* Default for dark mode */
 }
 
-/* Invert logo colors for light mode */
-[data-theme="light"] .brand-logo {
-    filter: invert(1);
+/* Add black background to logo badge in light mode */
+[data-theme="light"] .brand-badge {
+    background: #000000;
 }
 
 .subtitle {
