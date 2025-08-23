@@ -4,6 +4,8 @@ import requests
 import os
 import time
 import re
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
 
 # Perplexity API configuration
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
@@ -26,258 +28,26 @@ def extract_text_from_url(url):
         if response.status_code != 200:
             raise ValueError(f"Failed to fetch URL (status {response.status_code})")
         
-        # Special handling for Twitter/X
-        if 'twitter.com' in url or 'x.com' in url:
-            content = response.text
-            
-            # Try multiple extraction strategies for Twitter/X
-            
-            # Strategy 1: Look for structured data (most reliable)
-            structured_patterns = [
-                r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
-                r'<script[^>]*type="application/json"[^>]*>(.*?)</script>'
-            ]
-            
-            for pattern in structured_patterns:
-                matches = re.findall(pattern, content, re.DOTALL | re.IGNORECASE)
-                for match in matches:
+        # Special handling for Twitter/X using syndication endpoint (WORKING METHOD)
+        parsed_url = urlparse(url)
+        if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com", "m.twitter.com"} and "/status/" in parsed_url.path:
+            m = re.search(r"/status/(\d+)", parsed_url.path)
+            if m:
+                tweet_id = m.group(1)
+                tw = requests.get(
+                    "https://cdn.syndication.twimg.com/widgets/tweet",
+                    params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
+                )
+                if tw.status_code == 200:
                     try:
-                        data = json.loads(match)
-                        if isinstance(data, dict):
-                            # Look for tweet text in structured data
-                            if 'text' in data:
-                                tweet_text = data['text']
-                                if tweet_text and len(tweet_text) > 20:
-                                    return tweet_text
-                            elif 'description' in data:
-                                desc = data['description']
-                                if desc and len(desc) > 20:
-                                    return desc
-                    except:
-                        continue
-            
-            # Strategy 2: Look for meta tags with tweet content
-            meta_patterns = [
-                r'<meta[^>]*name="description"[^>]*content="([^"]*)"',
-                r'<meta[^>]*property="og:description"[^>]*content="([^"]*)"',
-                r'<meta[^>]*name="twitter:description"[^>]*content="([^"]*)"',
-                r'<meta[^>]*property="twitter:description"[^>]*content="([^"]*)"',
-                r'<meta[^>]*name="twitter:title"[^>]*content="([^"]*)"',
-                r'<meta[^>]*property="og:title"[^>]*content="([^"]*)"'
-            ]
-            
-            for pattern in meta_patterns:
-                match = re.search(pattern, content, re.IGNORECASE)
-                if match:
-                    extracted_text = match.group(1)
-                    # Clean up the extracted text
-                    extracted_text = re.sub(r'&[a-zA-Z]+;', ' ', extracted_text)
-                    extracted_text = re.sub(r'&amp;', '&', extracted_text)
-                    extracted_text = re.sub(r'&lt;', '<', extracted_text)
-                    extracted_text = re.sub(r'&gt;', '>', extracted_text)
-                    extracted_text = re.sub(r'&quot;', '"', extracted_text)
-                    extracted_text = re.sub(r'\s+', ' ', extracted_text).strip()
-                    if extracted_text and len(extracted_text) > 20:
-                        return extracted_text
-            
-            # Strategy 3: Look for tweet text in HTML attributes
-            tweet_attr_patterns = [
-                r'data-text="([^"]*)"',
-                r'data-tweet-text="([^"]*)"',
-                r'data-content="([^"]*)"'
-            ]
-            
-            for pattern in tweet_attr_patterns:
-                match = re.search(pattern, content, re.IGNORECASE)
-                if match:
-                    tweet_text = match.group(1)
-                    tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
-                    tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
-                    if tweet_text and len(tweet_text) > 20:
-                        return tweet_text
-            
-            # Strategy 4: Look for tweet content in specific divs
-            tweet_div_patterns = [
-                r'<div[^>]*data-testid="tweetText"[^>]*>(.*?)</div>',
-                r'<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>',
-                r'<span[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</span>',
-                r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>'
-            ]
-            
-            for pattern in tweet_div_patterns:
-                match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
-                if match:
-                    tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
-                    tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
-                    tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
-                    if tweet_text and len(tweet_text) > 20:
-                        return tweet_text
-            
-            # Strategy 5: Try mobile version of the URL
-            try:
-                mobile_url = url.replace('x.com', 'mobile.twitter.com').replace('twitter.com', 'mobile.twitter.com')
-                mobile_response = requests.get(mobile_url, headers=headers, timeout=15)
-                if mobile_response.status_code == 200:
-                    mobile_content = mobile_response.text
-                    
-                    # Look for tweet text in mobile version
-                    mobile_patterns = [
-                        r'<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>',
-                        r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
-                        r'<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</p>'
-                    ]
-                    
-                    for pattern in mobile_patterns:
-                        match = re.search(pattern, mobile_content, re.DOTALL | re.IGNORECASE)
-                        if match:
-                            tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
-                            tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
-                            tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
-                            if tweet_text and len(tweet_text) > 20:
-                                return tweet_text
-            except:
-                pass
-            
-            # Strategy 6: Smart content extraction - look for human-readable text
-            # Remove all HTML tags first
-            clean_content = re.sub(r'<[^>]+>', ' ', content)
-            clean_content = re.sub(r'&[a-zA-Z]+;', ' ', clean_content)
-            clean_content = re.sub(r'\s+', ' ', clean_content).strip()
-            
-            # Split into lines and look for meaningful text
-            lines = clean_content.split('\n')
-            meaningful_lines = []
-            
-            for line in lines:
-                line = line.strip()
-                # Less aggressive filtering - only block obvious CSS/JS
-                if (line and len(line) > 20 and 
-                    'javascript' not in line.lower() and 
-                    'enable javascript' not in line.lower() and
-                    'browser' not in line.lower() and
-                    'error' not in line.lower() and
-                    'script' not in line.lower() and
-                    # Only block lines that are purely CSS/JS
-                    not (line.count('{') > 0 and line.count('}') > 0 and ':' in line and ';' in line) and
-                    # Block obvious CSS property lines
-                    not (line.count(':') > 0 and line.count(';') > 0 and len(line) < 100) and
-                    # Block obvious JavaScript lines
-                    not (line.startswith('function') or line.startswith('var ') or line.startswith('const ') or line.startswith('let ')) and
-                    # Block import/export statements
-                    not (line.startswith('import ') or line.startswith('export ')) and
-                    # Block control flow statements
-                    not (line.startswith('if (') or line.startswith('for (') or line.startswith('while (')) and
-                    # Block return statements
-                    not line.startswith('return ') and
-                    # Block obvious CSS selectors
-                    not (line.startswith('#') and ':' in line) and
-                    not (line.startswith('.') and ':' in line)):
-                    meaningful_lines.append(line)
-            
-            if meaningful_lines:
-                return ' '.join(meaningful_lines[:3])
-            
-            # Strategy 7: Try to extract from the page title
-            title_match = re.search(r'<title[^>]*>(.*?)</title>', content, re.IGNORECASE)
-            if title_match:
-                title_text = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
-                title_text = re.sub(r'&[a-zA-Z]+;', ' ', title_text)
-                title_text = re.sub(r'\s+', ' ', title_text).strip()
-                if title_text and len(title_text) > 20 and 'twitter' not in title_text.lower() and 'x.com' not in title_text.lower():
-                    return title_text
-            
-            # Strategy 8: Last resort - try to find any text that looks like a tweet
-            # Look for text that contains common tweet patterns
-            tweet_patterns = [
-                r'([A-Z][^.!?]*[.!?])',  # Sentences starting with capital letters
-                r'([^<>{}:;]+)',  # Text without HTML, CSS, or JS characters
-            ]
-            
-            for pattern in tweet_patterns:
-                matches = re.findall(pattern, clean_content)
-                for match in matches:
-                    match = match.strip()
-                    if (match and len(match) > 30 and 
-                        'javascript' not in match.lower() and
-                        'css' not in match.lower() and
-                        'error' not in match.lower() and
-                        'script' not in match.lower() and
-                        not match.startswith('{') and
-                        not match.startswith('}') and
-                        not match.startswith('#') and
-                        not match.startswith('.') and
-                        ':' not in match[:20] and  # Avoid CSS properties at the start
-                        ';' not in match[-10:]):   # Avoid CSS statements at the end
-                        return match
-            
-            # Strategy 9: Look for text that resembles actual tweet content
-            # Split content into chunks and analyze each one
-            chunks = re.split(r'[{}:;]', clean_content)
-            for chunk in chunks:
-                chunk = chunk.strip()
-                # Look for chunks that look like real text (not CSS/JS)
-                if (chunk and len(chunk) > 50 and
-                    chunk.count(' ') > 5 and  # Multiple words
-                    chunk.count('a') > 3 and   # Contains common letters
-                    chunk.count('e') > 3 and
-                    not any(css_word in chunk.lower() for css_word in ['background', 'color', 'border', 'margin', 'padding', 'font', 'display', 'position']) and
-                    not any(js_word in chunk.lower() for js_word in ['function', 'var', 'const', 'let', 'return', 'if', 'for', 'while', 'import', 'export']) and
-                    not chunk.startswith('#') and
-                    not chunk.startswith('.') and
-                    not chunk.startswith('@') and
-                    not chunk.startswith('http')):
-                    return chunk
-            
-            # Strategy 10: Try to extract from any remaining text that looks human-readable
-            # Look for the longest piece of text that doesn't contain obvious CSS/JS markers
-            remaining_text = clean_content
-            # Remove obvious CSS/JS patterns
-            remaining_text = re.sub(r'[{}:;]', ' ', remaining_text)
-            remaining_text = re.sub(r'\s+', ' ', remaining_text).strip()
-            
-            # Split into sentences and find the longest meaningful one
-            sentences = re.split(r'[.!?]', remaining_text)
-            best_sentence = ""
-            for sentence in sentences:
-                sentence = sentence.strip()
-                if (sentence and len(sentence) > 30 and
-                    sentence.count(' ') > 3 and
-                    not any(bad_word in sentence.lower() for bad_word in ['javascript', 'css', 'error', 'script', 'function', 'var', 'const', 'let']) and
-                    not sentence.startswith('#') and
-                    not sentence.startswith('.') and
-                    len(sentence) > len(best_sentence)):
-                    best_sentence = sentence
-            
-            if best_sentence:
-                return best_sentence
-            
-            # If all strategies fail, try to extract any meaningful text from the page
-            # Look for any text that might be human-readable content
-            clean_content = re.sub(r'<[^>]+>', ' ', content)
-            clean_content = re.sub(r'\{[^}]*\}', '', clean_content)
-            clean_content = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', clean_content)
-            clean_content = re.sub(r'\s+', ' ', clean_content).strip()
-            
-            # Split into chunks and find the most promising one
-            chunks = re.split(r'[.!?]', clean_content)
-            best_chunk = ""
-            for chunk in chunks:
-                chunk = chunk.strip()
-                if (chunk and len(chunk) > 30 and
-                    chunk.count(' ') > 5 and
-                    not any(bad_word in chunk.lower() for bad_word in ['javascript', 'css', 'error', 'script', 'function', 'var', 'const', 'let', 'background', 'color', 'border', 'margin', 'padding', 'font', 'display', 'position']) and
-                    not chunk.startswith('#') and
-                    not chunk.startswith('.') and
-                    not chunk.startswith('{') and
-                    not chunk.startswith('}') and
-                    len(chunk) > len(best_chunk)):
-                    best_chunk = chunk
-            
-            if best_chunk:
-                return best_chunk
-            
-            # If still no content, provide a helpful error message
-            raise ValueError("Unable to extract meaningful content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
+                        data = tw.json()
+                        text = data.get("text") or data.get("full_text") or data.get("i18n_text") or ""
+                        if not text and data.get("body_html"):
+                            text = BeautifulSoup(data["body_html"], "lxml").get_text(" ", strip=True)
+                        if text:
+                            return text
+                    except Exception:
+                        pass
         
         # General text extraction for other sites - COMPLETELY REWRITTEN
         text = response.text
