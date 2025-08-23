@@ -138,23 +138,53 @@ def extract_text_from_url(url):
             except:
                 pass
             
-            # Strategy 6: Look for any meaningful text that's not JavaScript/CSS
-            lines = content.split('\n')
+            # Strategy 6: Aggressive text extraction - look for human-readable text
+            # Remove all HTML tags first
+            clean_content = re.sub(r'<[^>]+>', ' ', content)
+            clean_content = re.sub(r'&[a-zA-Z]+;', ' ', clean_content)
+            clean_content = re.sub(r'\s+', ' ', clean_content).strip()
+            
+            # Split into lines and look for meaningful text
+            lines = clean_content.split('\n')
             meaningful_lines = []
+            
             for line in lines:
-                line = re.sub(r'<[^>]+>', '', line).strip()
-                line = re.sub(r'&[a-zA-Z]+;', ' ', line)
+                line = line.strip()
+                # Filter out CSS, JavaScript, and technical content
                 if (line and len(line) > 20 and 
                     'javascript' not in line.lower() and 
                     'enable javascript' not in line.lower() and
                     'browser' not in line.lower() and
                     'error' not in line.lower() and
                     'script' not in line.lower() and
-                    '{' not in line and '}' not in line):
+                    '{' not in line and '}' not in line and
+                    ':' not in line and  # Avoid CSS properties
+                    ';' not in line and  # Avoid CSS statements
+                    '#' not in line and  # Avoid CSS selectors
+                    '.' not in line and  # Avoid CSS classes
+                    'function' not in line.lower() and
+                    'var ' not in line.lower() and
+                    'const ' not in line.lower() and
+                    'let ' not in line.lower() and
+                    'import ' not in line.lower() and
+                    'export ' not in line.lower() and
+                    'return ' not in line.lower() and
+                    'if (' not in line.lower() and
+                    'for (' not in line.lower() and
+                    'while (' not in line.lower()):
                     meaningful_lines.append(line)
             
             if meaningful_lines:
                 return ' '.join(meaningful_lines[:3])
+            
+            # Strategy 7: Try to extract from the page title
+            title_match = re.search(r'<title[^>]*>(.*?)</title>', content, re.IGNORECASE)
+            if title_match:
+                title_text = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
+                title_text = re.sub(r'&[a-zA-Z]+;', ' ', title_text)
+                title_text = re.sub(r'\s+', ' ', title_text).strip()
+                if title_text and len(title_text) > 20 and 'twitter' not in title_text.lower() and 'x.com' not in title_text.lower():
+                    return title_text
             
             # If all strategies fail, provide a comprehensive error message
             raise ValueError("Unable to extract tweet content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
