@@ -34,20 +34,68 @@ def extract_text_from_url(url):
             m = re.search(r"/status/(\d+)", parsed_url.path)
             if m:
                 tweet_id = m.group(1)
-                tw = requests.get(
-                    "https://cdn.syndication.twimg.com/widgets/tweet",
-                    params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
-                )
-                if tw.status_code == 200:
-                    try:
+                
+                # Try Twitter syndication endpoint first
+                try:
+                    tw = requests.get(
+                        "https://cdn.syndication.twimg.com/widgets/tweet",
+                        params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
+                    )
+                    if tw.status_code == 200:
                         data = tw.json()
                         text = data.get("text") or data.get("full_text") or data.get("i18n_text") or ""
                         if not text and data.get("body_html"):
                             text = BeautifulSoup(data["body_html"], "lxml").get_text(" ", strip=True)
-                        if text:
+                        if text and len(text) > 20:
                             return text
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+                
+                # Fallback: Try Twitter's oEmbed endpoint
+                try:
+                    oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
+                    oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
+                    if oembed_response.status_code == 200:
+                        oembed_data = oembed_response.json()
+                        if oembed_data.get("html"):
+                            # Extract text from oEmbed HTML
+                            soup = BeautifulSoup(oembed_data["html"], "lxml")
+                            # Remove all links and formatting, keep only text
+                            for tag in soup.find_all(['a', 'strong', 'em', 'b', 'i']):
+                                tag.unwrap()
+                            text = soup.get_text(" ", strip=True)
+                            if text and len(text) > 20:
+                                return text
+                except Exception:
+                    pass
+                
+                # Fallback: Try mobile Twitter URL
+                try:
+                    mobile_url = f"https://mobile.twitter.com/i/status/{tweet_id}"
+                    mobile_response = requests.get(mobile_url, headers=headers, timeout=12)
+                    if mobile_response.status_code == 200:
+                        mobile_content = mobile_response.text
+                        
+                        # Look for tweet text in mobile version
+                        tweet_patterns = [
+                            r'<div[^>]*data-testid="tweetText"[^>]*>(.*?)</div>',
+                            r'<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>',
+                            r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
+                            r'<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</p>',
+                            r'<meta[^>]*name="description"[^>]*content="([^"]*)"',
+                            r'<meta[^>]*property="og:description"[^>]*content="([^"]*)"'
+                        ]
+                        
+                        for pattern in tweet_patterns:
+                            match = re.search(pattern, mobile_content, re.DOTALL | re.IGNORECASE)
+                            if match:
+                                tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
+                                tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
+                                tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
+                                if tweet_text and len(tweet_text) > 20:
+                                    return tweet_text
+                except Exception:
+                    pass
         
         # General text extraction for other sites - COMPLETELY REWRITTEN
         text = response.text
