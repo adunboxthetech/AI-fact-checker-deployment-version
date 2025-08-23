@@ -279,71 +279,95 @@ def extract_text_from_url(url):
             # If still no content, provide a helpful error message
             raise ValueError("Unable to extract meaningful content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
         
-        # General text extraction for other sites
+        # General text extraction for other sites - COMPLETELY REWRITTEN
         text = response.text
         
-        # Remove script and style tags
+        # STEP 1: Remove ALL script, style, and non-content HTML elements
         text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        
-        # Remove more HTML elements that typically contain non-content
         text = re.sub(r'<nav[^>]*>.*?</nav>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<header[^>]*>.*?</header>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<footer[^>]*>.*?</footer>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<aside[^>]*>.*?</aside>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<form[^>]*>.*?</form>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<button[^>]*>.*?</button>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<input[^>]*>', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'<select[^>]*>.*?</select>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<textarea[^>]*>.*?</textarea>', '', text, flags=re.DOTALL | re.IGNORECASE)
         
-        # Basic HTML tag removal
-        text = re.sub(r'<[^>]+>', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # More aggressive CSS and JS artifact removal
-        text = re.sub(r'\{[^}]*\}', '', text)  # Remove CSS blocks
+        # STEP 2: Remove ALL CSS and JS patterns BEFORE HTML tag removal
+        text = re.sub(r'\{[^}]*\}', '', text)  # Remove ALL CSS blocks
+        text = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', text)  # Remove ALL CSS properties
         text = re.sub(r'#[a-zA-Z0-9_-]+', '', text)  # Remove CSS IDs
         text = re.sub(r'\.[a-zA-Z0-9_-]+', '', text)  # Remove CSS classes
-        text = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', text)  # Remove CSS properties
         text = re.sub(r'function\s*\([^)]*\)\s*\{[^}]*\}', '', text)  # Remove JS functions
-        text = re.sub(r'var\s+[^;]+;', '', text)  # Remove JS variables
-        text = re.sub(r'const\s+[^;]+;', '', text)  # Remove JS constants
-        text = re.sub(r'let\s+[^;]+;', '', text)  # Remove JS let declarations
+        text = re.sub(r'(var|const|let)\s+[^;]+;', '', text)  # Remove JS declarations
+        text = re.sub(r'[a-zA-Z0-9_-]+\s*=\s*[^;]+;', '', text)  # Remove JS assignments
+        text = re.sub(r'import\s+[^;]+;', '', text)  # Remove JS imports
+        text = re.sub(r'export\s+[^;]+;', '', text)  # Remove JS exports
         
-        # Clean up extra whitespace
+        # STEP 3: Remove remaining HTML tags
+        text = re.sub(r'<[^>]+>', ' ', text)
+        
+        # STEP 4: Clean up whitespace and normalize
         text = re.sub(r'\s+', ' ', text).strip()
         
-        # Filter out lines that look like CSS/JS
+        # STEP 5: Split into lines and filter out ANY line that looks like code
         lines = text.split('\n')
         filtered_lines = []
         for line in lines:
             line = line.strip()
-            # Skip lines that are clearly CSS/JS
-            if (line and len(line) > 10 and  # Reduced minimum line length
-                not re.match(r'^[.#][a-zA-Z0-9_-]+\s*\{', line) and  # CSS selectors
-                not re.match(r'^[a-zA-Z-]+\s*:\s*[^;]+;$', line) and  # CSS properties
-                not re.match(r'^function\s*\(', line) and  # JS functions
-                not re.match(r'^(var|const|let)\s+', line) and  # JS declarations
-                not re.match(r'^[{}]$', line) and  # Just braces
-                not re.match(r'^[a-zA-Z0-9_-]+\s*=\s*[^;]+;$', line) and  # JS assignments
-                'background' not in line.lower() and
-                'color' not in line.lower() and
-                'border' not in line.lower() and
-                'margin' not in line.lower() and
-                'padding' not in line.lower() and
-                'font' not in line.lower() and
-                'display' not in line.lower() and
-                'position' not in line.lower()):
+            # Only keep lines that look like human-readable text
+            if (line and len(line) > 15 and
+                line.count(' ') > 2 and  # Must have multiple words
+                not re.search(r'[{}:;]', line) and  # No CSS/JS characters
+                not re.search(r'function|var|const|let|import|export', line, re.IGNORECASE) and  # No JS keywords
+                not re.search(r'background|color|border|margin|padding|font|display|position|width|height', line, re.IGNORECASE) and  # No CSS properties
+                not re.match(r'^[.#][a-zA-Z0-9_-]', line) and  # No CSS selectors
+                not re.match(r'^[a-zA-Z0-9_-]+\s*[=:]', line) and  # No assignments or properties
+                not re.match(r'^[{}]$', line) and  # No just braces
+                not re.match(r'^[a-zA-Z0-9_-]+\s*\(', line) and  # No function calls
+                line.count('a') + line.count('e') + line.count('i') + line.count('o') + line.count('u') > 3):  # Must have vowels (human text)
                 filtered_lines.append(line)
         
         text = ' '.join(filtered_lines)
         
-        # If filtering removed too much content, use the original text
-        if len(text.strip()) < 20:
-            # Fallback to simpler cleaning
-            text = response.text
-            text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-            text = re.sub(r'<[^>]+>', ' ', text)
-            text = re.sub(r'\s+', ' ', text).strip()
-            if len(text) > 8000:
-                text = text[:8000] + "…"
+        # STEP 6: If we still have CSS/JS artifacts, do final cleanup
+        text = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;?', '', text)  # Remove any remaining CSS properties
+        text = re.sub(r'\{[^}]*\}', '', text)  # Remove any remaining blocks
+        text = re.sub(r'[a-zA-Z0-9_-]+\s*=\s*[^;]+;?', '', text)  # Remove any remaining assignments
+        
+        # STEP 7: Final cleanup
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # STEP 8: If we still don't have good content, try a different approach
+        if len(text.strip()) < 30:
+            # Look for any text that looks like actual content
+            original_text = response.text
+            # Try to find text in specific content areas
+            content_patterns = [
+                r'<main[^>]*>(.*?)</main>',
+                r'<article[^>]*>(.*?)</article>',
+                r'<section[^>]*>(.*?)</section>',
+                r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
+                r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
+                r'<p[^>]*>(.*?)</p>'
+            ]
+            
+            for pattern in content_patterns:
+                matches = re.findall(pattern, original_text, re.DOTALL | re.IGNORECASE)
+                for match in matches:
+                    # Clean this specific content
+                    clean_match = re.sub(r'<[^>]+>', ' ', match)
+                    clean_match = re.sub(r'\{[^}]*\}', '', clean_match)
+                    clean_match = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', clean_match)
+                    clean_match = re.sub(r'\s+', ' ', clean_match).strip()
+                    
+                    if len(clean_match) > 30 and clean_match.count(' ') > 5:
+                        text = clean_match
+                        break
+                if len(text) > 30:
+                    break
         
         # Limit length
         if len(text) > 8000:
