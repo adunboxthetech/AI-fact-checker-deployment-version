@@ -79,31 +79,10 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(response_data).encode())
         else:
-            # Serve static files
-            try:
-                with open(f'..{self.path}', 'rb') as f:
-                    content = f.read()
-                
-                # Determine content type
-                if self.path.endswith('.html'):
-                    content_type = 'text/html'
-                elif self.path.endswith('.css'):
-                    content_type = 'text/css'
-                elif self.path.endswith('.js'):
-                    content_type = 'application/javascript'
-                elif self.path.endswith('.png'):
-                    content_type = 'image/png'
-                else:
-                    content_type = 'text/plain'
-                
-                self.send_response(200)
-                self.send_header('Content-type', content_type)
-                self.end_headers()
-                self.wfile.write(content)
-            except FileNotFoundError:
-                self.send_response(404)
-                self.end_headers()
-                self.wfile.write(b'File not found')
+            self.send_response(404)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"error": "Not found"}).encode())
     
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
