@@ -89,9 +89,14 @@ def fact_check_text(text):
     }
     
     prompt = f"""
-    Extract and fact-check all factual claims from this text. 
+    Analyze this text and identify any factual claims that can be verified. If you find factual claims, fact-check them.
     
     Text: {text}
+    
+    Instructions:
+    1. First, identify any factual claims in the text
+    2. For each claim, provide a fact-check analysis
+    3. If no factual claims are found, explain why
     
     Return a JSON response with:
     - verdict: TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE
@@ -99,7 +104,11 @@ def fact_check_text(text):
     - explanation: brief explanation
     - sources: list of URLs
     
-    If no factual claims are found, return an empty array.
+    If the text contains no factual claims, return:
+    - verdict: "NO FACTUAL CLAIMS"
+    - confidence: 0
+    - explanation: "This text does not contain verifiable factual claims"
+    - sources: []
     """
     
     try:
