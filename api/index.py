@@ -251,8 +251,33 @@ def extract_text_from_url(url):
             if best_sentence:
                 return best_sentence
             
-            # If all strategies fail, provide a comprehensive error message
-            raise ValueError("Unable to extract tweet content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
+            # If all strategies fail, try to extract any meaningful text from the page
+            # Look for any text that might be human-readable content
+            clean_content = re.sub(r'<[^>]+>', ' ', content)
+            clean_content = re.sub(r'\{[^}]*\}', '', clean_content)
+            clean_content = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', clean_content)
+            clean_content = re.sub(r'\s+', ' ', clean_content).strip()
+            
+            # Split into chunks and find the most promising one
+            chunks = re.split(r'[.!?]', clean_content)
+            best_chunk = ""
+            for chunk in chunks:
+                chunk = chunk.strip()
+                if (chunk and len(chunk) > 30 and
+                    chunk.count(' ') > 5 and
+                    not any(bad_word in chunk.lower() for bad_word in ['javascript', 'css', 'error', 'script', 'function', 'var', 'const', 'let', 'background', 'color', 'border', 'margin', 'padding', 'font', 'display', 'position']) and
+                    not chunk.startswith('#') and
+                    not chunk.startswith('.') and
+                    not chunk.startswith('{') and
+                    not chunk.startswith('}') and
+                    len(chunk) > len(best_chunk)):
+                    best_chunk = chunk
+            
+            if best_chunk:
+                return best_chunk
+            
+            # If still no content, provide a helpful error message
+            raise ValueError("Unable to extract meaningful content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
         
         # General text extraction for other sites
         text = response.text
@@ -261,17 +286,53 @@ def extract_text_from_url(url):
         text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
         
+        # Remove more HTML elements that typically contain non-content
+        text = re.sub(r'<nav[^>]*>.*?</nav>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<header[^>]*>.*?</header>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<footer[^>]*>.*?</footer>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<aside[^>]*>.*?</aside>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        
         # Basic HTML tag removal
         text = re.sub(r'<[^>]+>', ' ', text)
         text = re.sub(r'\s+', ' ', text).strip()
         
-        # Remove common CSS and JS artifacts
-        text = re.sub(r'\{[^}]*\}', '', text)
-        text = re.sub(r'#[a-zA-Z0-9_-]+', '', text)
-        text = re.sub(r'\.[a-zA-Z0-9_-]+', '', text)
+        # More aggressive CSS and JS artifact removal
+        text = re.sub(r'\{[^}]*\}', '', text)  # Remove CSS blocks
+        text = re.sub(r'#[a-zA-Z0-9_-]+', '', text)  # Remove CSS IDs
+        text = re.sub(r'\.[a-zA-Z0-9_-]+', '', text)  # Remove CSS classes
+        text = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', text)  # Remove CSS properties
+        text = re.sub(r'function\s*\([^)]*\)\s*\{[^}]*\}', '', text)  # Remove JS functions
+        text = re.sub(r'var\s+[^;]+;', '', text)  # Remove JS variables
+        text = re.sub(r'const\s+[^;]+;', '', text)  # Remove JS constants
+        text = re.sub(r'let\s+[^;]+;', '', text)  # Remove JS let declarations
         
         # Clean up extra whitespace
         text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Filter out lines that look like CSS/JS
+        lines = text.split('\n')
+        filtered_lines = []
+        for line in lines:
+            line = line.strip()
+            # Skip lines that are clearly CSS/JS
+            if (line and len(line) > 20 and
+                not re.match(r'^[.#][a-zA-Z0-9_-]+\s*\{', line) and  # CSS selectors
+                not re.match(r'^[a-zA-Z-]+\s*:\s*[^;]+;$', line) and  # CSS properties
+                not re.match(r'^function\s*\(', line) and  # JS functions
+                not re.match(r'^(var|const|let)\s+', line) and  # JS declarations
+                not re.match(r'^[{}]$', line) and  # Just braces
+                not re.match(r'^[a-zA-Z0-9_-]+\s*=\s*[^;]+;$', line) and  # JS assignments
+                'background' not in line.lower() and
+                'color' not in line.lower() and
+                'border' not in line.lower() and
+                'margin' not in line.lower() and
+                'padding' not in line.lower() and
+                'font' not in line.lower() and
+                'display' not in line.lower() and
+                'position' not in line.lower()):
+                filtered_lines.append(line)
+        
+        text = ' '.join(filtered_lines)
         
         # Limit length
         if len(text) > 8000:
