@@ -12,26 +12,66 @@ PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 def extract_text_from_url(url):
     """Extract text content from a URL"""
     headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
     try:
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
         if response.status_code != 200:
             raise ValueError(f"Failed to fetch URL (status {response.status_code})")
         
-        # Simple text extraction
+        # Special handling for Twitter/X
+        if 'twitter.com' in url or 'x.com' in url:
+            # Try to extract tweet content from meta tags
+            content = response.text
+            import re
+            
+            # Look for meta description or og:description
+            meta_patterns = [
+                r'<meta[^>]*name="description"[^>]*content="([^"]*)"',
+                r'<meta[^>]*property="og:description"[^>]*content="([^"]*)"',
+                r'<meta[^>]*name="twitter:description"[^>]*content="([^"]*)"'
+            ]
+            
+            for pattern in meta_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    extracted_text = match.group(1)
+                    if extracted_text and len(extracted_text) > 20:
+                        return extracted_text
+            
+            # Fallback: look for tweet text in the page
+            tweet_pattern = r'<div[^>]*class="[^"]*tweet[^"]*"[^>]*>.*?<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>'
+            match = re.search(tweet_pattern, content, re.DOTALL | re.IGNORECASE)
+            if match:
+                tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
+                if tweet_text and len(tweet_text) > 20:
+                    return tweet_text
+        
+        # General text extraction
         text = response.text
+        
+        # Remove script and style tags
+        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
         
         # Basic HTML tag removal
         text = re.sub(r'<[^>]+>', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Remove common CSS and JS artifacts
+        text = re.sub(r'\{[^}]*\}', '', text)
+        text = re.sub(r'#[a-zA-Z0-9_-]+', '', text)
+        text = re.sub(r'\.[a-zA-Z0-9_-]+', '', text)
+        
+        # Clean up extra whitespace
         text = re.sub(r'\s+', ' ', text).strip()
         
         # Limit length
         if len(text) > 8000:
             text = text[:8000] + "…"
         
-        if not text or len(text) < 100:
+        if not text or len(text) < 50:
             raise ValueError("Could not extract meaningful text from the provided URL")
         
         return text
