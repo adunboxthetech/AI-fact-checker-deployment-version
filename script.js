@@ -328,7 +328,7 @@ class FactCheckerApp {
                 <strong>Claim ${index}:</strong> ${this.escapeHtml(result.claim || 'Unknown claim')}
             </div>
             
-            ${result.status ? `<div class="status">${this.escapeHtml(result.status)}</div>` : ''}
+
             
             <div class="verdict ${verdictClass}">
                 ${this.escapeHtml(result.result.verdict || 'UNKNOWN')}

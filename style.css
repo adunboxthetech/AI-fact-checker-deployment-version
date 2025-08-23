@@ -339,18 +339,7 @@ body {
 .verdict.false { background: linear-gradient(135deg, var(--false), #dc2626); color: white; }
 .verdict.partial { background: linear-gradient(135deg, var(--partial), #d97706); color: #111827; }
 
-.status {
-    display: inline-block;
-    padding: 6px 12px;
-    border-radius: 999px;
-    font-size: 13px;
-    font-weight: 700;
-    margin-bottom: 10px;
-    background: linear-gradient(135deg, #f59e0b, #d97706);
-    color: white;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
+
 
 .confidence {
     font-size: 14px;
