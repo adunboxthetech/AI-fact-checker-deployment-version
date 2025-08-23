@@ -296,26 +296,32 @@ def fact_check_text(text):
     }
     
     prompt = f"""
-    Analyze this text and identify any factual claims that can be verified. If you find factual claims, fact-check them.
+    You are a fact-checking assistant. Analyze the following text and fact-check any factual claims.
     
-    Text: {text}
+    TEXT TO ANALYZE: {text}
     
-    Instructions:
-    1. First, identify any factual claims in the text
-    2. For each claim, provide a fact-check analysis
-    3. If no factual claims are found, explain why
+    TASK: If you find factual claims, provide a fact-check analysis. If no factual claims are found, indicate this.
     
-    Return a JSON response with:
-    - verdict: TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE
-    - confidence: 0-100
-    - explanation: brief explanation
-    - sources: list of URLs
+    RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
+    {{
+        "verdict": "TRUE",
+        "confidence": 95,
+        "explanation": "Your explanation here in plain text, not JSON format",
+        "sources": ["https://example.com/source1", "https://example.com/source2"]
+    }}
     
-    If the text contains no factual claims, return:
-    - verdict: "NO FACTUAL CLAIMS"
-    - confidence: 0
-    - explanation: "This text does not contain verifiable factual claims"
-    - sources: []
+    VERDICT OPTIONS: TRUE, FALSE, PARTIALLY TRUE, INSUFFICIENT EVIDENCE, NO FACTUAL CLAIMS
+    CONFIDENCE: 0-100 (integer)
+    EXPLANATION: Plain text explanation, not JSON
+    SOURCES: Array of URLs as strings
+    
+    CRITICAL REQUIREMENTS: 
+    - Return ONLY the JSON object
+    - Do not include any text before or after
+    - Do not format the explanation as JSON
+    - Use plain text for the explanation field
+    - Do not prefix with "json" or any other text
+    - The response must be parseable by JSON.parse()
     """
     
     try:
@@ -333,14 +339,24 @@ def fact_check_text(text):
         if response.status_code == 200:
             result = response.json()
             content = result['choices'][0]['message']['content']
+
             
             # Try to parse as JSON, fallback to simple response
             try:
-                parsed = json.loads(content)
+                # First, try to clean the content if it has "json" prefix
+                clean_content = content.strip()
+                if clean_content.startswith('json '):
+                    clean_content = clean_content[5:].strip()
+                
+                # Debug: log what we're trying to parse
+                print(f"Attempting to parse: {clean_content[:200]}...")
+                
+                parsed = json.loads(clean_content)
                 # Format for frontend: create fact_check_results array
                 fact_check_result = {
                     "claim": text[:200] + "..." if len(text) > 200 else text,
-                    "result": parsed
+                    "result": parsed,
+                    "status": "ANALYSIS COMPLETE"
                 }
                 return {
                     "fact_check_results": [fact_check_result],
@@ -349,16 +365,58 @@ def fact_check_text(text):
                     "timestamp": time.time()
                 }, 200
             except:
-                # Fallback response
-                fact_check_result = {
-                    "claim": text[:200] + "..." if len(text) > 200 else text,
-                    "result": {
-                        "verdict": "ANALYSIS COMPLETE",
-                        "confidence": 75,
-                        "explanation": content,
-                        "sources": ["Perplexity Analysis"]
+                # If the content looks like JSON but failed to parse, try to extract useful parts
+                if '"verdict"' in content and '"explanation"' in content:
+                    # Try to extract key parts using regex
+                    import re
+                    verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
+                    confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
+                    explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
+                    sources_match = re.search(r'"sources":\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+                    
+                    verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
+                    confidence = int(confidence_match.group(1)) if confidence_match else 75
+                    explanation = explanation_match.group(1) if explanation_match else content
+                    sources = ["Perplexity Analysis"]
+                    
+
+                    
+                    if sources_match:
+                        # Try to extract URLs from sources
+                        sources_text = sources_match.group(1)
+                        # Look for URLs in the sources text, handling quoted strings
+                        url_matches = re.findall(r'https?://[^"\s,]+', sources_text)
+                        if url_matches:
+                            sources = url_matches
+                        else:
+                            # Fallback: try to extract from the full content
+                            all_urls = re.findall(r'https?://[^"\s,]+', content)
+                            if all_urls:
+                                sources = all_urls[:5]  # Limit to first 5 URLs
+                    
+                    fact_check_result = {
+                        "claim": text[:200] + "..." if len(text) > 200 else text,
+                        "result": {
+                            "verdict": verdict,
+                            "confidence": confidence,
+                            "explanation": explanation,
+                            "sources": sources
+                        },
+                        "status": "ANALYSIS COMPLETE"
                     }
-                }
+                else:
+                    # Fallback response
+                    fact_check_result = {
+                        "claim": text[:200] + "..." if len(text) > 200 else text,
+                        "result": {
+                            "verdict": "INSUFFICIENT EVIDENCE",
+                            "confidence": 75,
+                            "explanation": content,
+                            "sources": ["Perplexity Analysis"]
+                        },
+                        "status": "ANALYSIS COMPLETE"
+                    }
+                
                 return {
                     "fact_check_results": [fact_check_result],
                     "original_text": text,

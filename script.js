@@ -170,6 +170,7 @@ class FactCheckerApp {
 
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
+
             this.displayResults(data);
         } catch (error) {
             console.error('Fact-check error:', error);
@@ -210,6 +211,7 @@ class FactCheckerApp {
     }
 
     displayResults(data) {
+
         this.resultsContainer.innerHTML = '';
         
         if (data.source_url) {
@@ -232,6 +234,7 @@ class FactCheckerApp {
         }
 
         if (!data.fact_check_results || data.fact_check_results.length === 0) {
+
             this.resultsContainer.innerHTML = '<p>No factual claims found to verify.</p>';
         } else {
             data.fact_check_results.forEach((result, index) => {
@@ -246,28 +249,98 @@ class FactCheckerApp {
 
     createClaimElement(result, index) {
         const div = document.createElement('div');
-        const verdict = result.result.verdict.toLowerCase();
+        
+        // Safety check for result structure
+        if (!result || !result.result) {
+            div.innerHTML = `
+                <div class="claim-result partial">
+                    <div class="explanation">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <strong>Error:</strong> Invalid result structure received from API
+                    </div>
+                </div>
+            `;
+            return div;
+        }
+        
+        const verdict = result.result.verdict ? result.result.verdict.toLowerCase() : 'unknown';
         const verdictClass = this.getVerdictClass(verdict);
         
         div.className = `claim-result ${verdictClass}`;
-        const sourcesHtml = this.renderSources(result.result.sources);
+        const sourcesHtml = this.renderSources(extractedSources);
+        
+        // Format the explanation nicely instead of showing raw JSON
+        let explanation = result.result.explanation || 'No explanation provided';
+        let extractedSources = result.result.sources || [];
+        
+        if (typeof explanation === 'string') {
+            // Check if explanation contains JSON-like content
+            if (explanation.includes('"verdict"') || explanation.includes('"confidence"') || explanation.includes('"explanation"')) {
+                try {
+                    // Try to extract JSON from the explanation
+                    let jsonStr = explanation;
+                    
+                    // Remove "json " prefix if present
+                    if (explanation.startsWith('json ')) {
+                        jsonStr = explanation.substring(5);
+                    }
+                    
+                    // Try to parse as JSON
+                    const parsed = JSON.parse(jsonStr);
+                    if (parsed.explanation) {
+                        explanation = parsed.explanation;
+                    } else if (parsed.verdict) {
+                        // If no explanation field, create one from other fields
+                        explanation = `Verdict: ${parsed.verdict}`;
+                        if (parsed.confidence) {
+                            explanation += ` (Confidence: ${parsed.confidence}%)`;
+                        }
+                    }
+                    
+                    // Extract sources from the parsed JSON if available
+                    if (parsed.sources && Array.isArray(parsed.sources) && parsed.sources.length > 0) {
+                        extractedSources = parsed.sources;
+                    }
+                } catch (e) {
+                    // If parsing fails, clean up the explanation by removing JSON artifacts
+                    explanation = explanation
+                        .replace(/^json\s*/, '') // Remove "json " prefix
+                        .replace(/[{}"]/g, '') // Remove braces and quotes
+                        .replace(/,/g, ', ') // Replace commas with comma + space
+                        .replace(/verdict:\s*/gi, '') // Remove "verdict:" labels
+                        .replace(/confidence:\s*\d+/gi, '') // Remove confidence labels
+                        .replace(/sources:\s*\[.*?\]/gi, '') // Remove sources array
+                        .replace(/\s+/g, ' ') // Normalize whitespace
+                        .trim();
+                    
+                    // Try to extract URLs from the cleaned explanation as fallback sources
+                    const urlMatches = explanation.match(/https?:\/\/[^\s]+/g);
+                    if (urlMatches && urlMatches.length > 0) {
+                        extractedSources = urlMatches;
+                    }
+                }
+            }
+        }
+        
         div.innerHTML = `
             <div class="claim-text">
-                <strong>Claim ${index}:</strong> ${this.escapeHtml(result.claim)}
+                <strong>Claim ${index}:</strong> ${this.escapeHtml(result.claim || 'Unknown claim')}
             </div>
             
+            ${result.status ? `<div class="status">${this.escapeHtml(result.status)}</div>` : ''}
+            
             <div class="verdict ${verdictClass}">
-                ${this.escapeHtml(result.result.verdict)}
+                ${this.escapeHtml(result.result.verdict || 'UNKNOWN')}
             </div>
             
             <div class="confidence">
                 <i class="fas fa-chart-bar"></i>
-                <strong>Confidence:</strong> ${this.escapeHtml(String(result.result.confidence))}%
+                <strong>Confidence:</strong> ${this.escapeHtml(String(result.result.confidence || 'N/A'))}%
             </div>
             
             <div class="explanation">
                 <i class="fas fa-info-circle"></i>
-                <strong>Analysis:</strong> ${this.escapeHtml(result.result.explanation)}
+                <strong>Analysis:</strong> ${this.escapeHtml(explanation)}
             </div>
             ${sourcesHtml}
         `;
