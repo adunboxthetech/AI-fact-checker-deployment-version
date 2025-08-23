@@ -138,7 +138,7 @@ def extract_text_from_url(url):
             except:
                 pass
             
-            # Strategy 6: Aggressive text extraction - look for human-readable text
+            # Strategy 6: Smart content extraction - look for human-readable text
             # Remove all HTML tags first
             clean_content = re.sub(r'<[^>]+>', ' ', content)
             clean_content = re.sub(r'&[a-zA-Z]+;', ' ', clean_content)
@@ -150,28 +150,28 @@ def extract_text_from_url(url):
             
             for line in lines:
                 line = line.strip()
-                # Filter out CSS, JavaScript, and technical content
+                # Less aggressive filtering - only block obvious CSS/JS
                 if (line and len(line) > 20 and 
                     'javascript' not in line.lower() and 
                     'enable javascript' not in line.lower() and
                     'browser' not in line.lower() and
                     'error' not in line.lower() and
                     'script' not in line.lower() and
-                    '{' not in line and '}' not in line and
-                    ':' not in line and  # Avoid CSS properties
-                    ';' not in line and  # Avoid CSS statements
-                    '#' not in line and  # Avoid CSS selectors
-                    '.' not in line and  # Avoid CSS classes
-                    'function' not in line.lower() and
-                    'var ' not in line.lower() and
-                    'const ' not in line.lower() and
-                    'let ' not in line.lower() and
-                    'import ' not in line.lower() and
-                    'export ' not in line.lower() and
-                    'return ' not in line.lower() and
-                    'if (' not in line.lower() and
-                    'for (' not in line.lower() and
-                    'while (' not in line.lower()):
+                    # Only block lines that are purely CSS/JS
+                    not (line.count('{') > 0 and line.count('}') > 0 and ':' in line and ';' in line) and
+                    # Block obvious CSS property lines
+                    not (line.count(':') > 0 and line.count(';') > 0 and len(line) < 100) and
+                    # Block obvious JavaScript lines
+                    not (line.startswith('function') or line.startswith('var ') or line.startswith('const ') or line.startswith('let ')) and
+                    # Block import/export statements
+                    not (line.startswith('import ') or line.startswith('export ')) and
+                    # Block control flow statements
+                    not (line.startswith('if (') or line.startswith('for (') or line.startswith('while (')) and
+                    # Block return statements
+                    not line.startswith('return ') and
+                    # Block obvious CSS selectors
+                    not (line.startswith('#') and ':' in line) and
+                    not (line.startswith('.') and ':' in line)):
                     meaningful_lines.append(line)
             
             if meaningful_lines:
@@ -185,6 +185,30 @@ def extract_text_from_url(url):
                 title_text = re.sub(r'\s+', ' ', title_text).strip()
                 if title_text and len(title_text) > 20 and 'twitter' not in title_text.lower() and 'x.com' not in title_text.lower():
                     return title_text
+            
+            # Strategy 8: Last resort - try to find any text that looks like a tweet
+            # Look for text that contains common tweet patterns
+            tweet_patterns = [
+                r'([A-Z][^.!?]*[.!?])',  # Sentences starting with capital letters
+                r'([^<>{}:;]+)',  # Text without HTML, CSS, or JS characters
+            ]
+            
+            for pattern in tweet_patterns:
+                matches = re.findall(pattern, clean_content)
+                for match in matches:
+                    match = match.strip()
+                    if (match and len(match) > 30 and 
+                        'javascript' not in match.lower() and
+                        'css' not in match.lower() and
+                        'error' not in match.lower() and
+                        'script' not in match.lower() and
+                        not match.startswith('{') and
+                        not match.startswith('}') and
+                        not match.startswith('#') and
+                        not match.startswith('.') and
+                        ':' not in match[:20] and  # Avoid CSS properties at the start
+                        ';' not in match[-10:]):   # Avoid CSS statements at the end
+                        return match
             
             # If all strategies fail, provide a comprehensive error message
             raise ValueError("Unable to extract tweet content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
