@@ -381,7 +381,7 @@ def fact_check_image(image_data_url, image_url):
             PERPLEXITY_URL,
             headers=headers,
             json={
-                "model": "sonar-medium-online",  # Use multimodal model
+                "model": "llama-3.1-sonar-large-128k-online",  # Use multimodal model
                 "messages": messages,
                 "max_tokens": 500
             },
@@ -412,25 +412,37 @@ def fact_check_image(image_data_url, image_url):
         results = []
         for claim in claims:
             if claim.strip():
-                fact_check_result = fact_check_text(claim)
-                if isinstance(fact_check_result, tuple):
-                    # If fact_check_text returns (data, status), extract just the data
-                    result_data, _ = fact_check_result
-                    if isinstance(result_data, dict) and 'fact_check_results' in result_data:
-                        # Extract the first result from the fact check
-                        if result_data['fact_check_results']:
-                            results.append({
-                                "claim": claim,
-                                "result": result_data['fact_check_results'][0]['result']
-                            })
-                else:
-                    # If fact_check_text returns just data
-                    if isinstance(fact_check_result, dict) and 'fact_check_results' in fact_check_result:
-                        if fact_check_result['fact_check_results']:
-                            results.append({
-                                "claim": claim,
-                                "result": fact_check_result['fact_check_results'][0]['result']
-                            })
+                try:
+                    fact_check_result = fact_check_text(claim)
+                    if isinstance(fact_check_result, tuple):
+                        # If fact_check_text returns (data, status), extract just the data
+                        result_data, _ = fact_check_result
+                        if isinstance(result_data, dict) and 'fact_check_results' in result_data:
+                            # Extract the first result from the fact check
+                            if result_data['fact_check_results']:
+                                results.append({
+                                    "claim": claim,
+                                    "result": result_data['fact_check_results'][0]['result']
+                                })
+                    else:
+                        # If fact_check_text returns just data
+                        if isinstance(fact_check_result, dict) and 'fact_check_results' in fact_check_result:
+                            if fact_check_result['fact_check_results']:
+                                results.append({
+                                    "claim": claim,
+                                    "result": fact_check_result['fact_check_results'][0]['result']
+                                })
+                except Exception as e:
+                    # If individual claim fact-checking fails, add a fallback result
+                    results.append({
+                        "claim": claim,
+                        "result": {
+                            "verdict": "INSUFFICIENT EVIDENCE",
+                            "confidence": 50,
+                            "explanation": f"Unable to verify this claim from the image: {claim}",
+                            "sources": ["Image Analysis"]
+                        }
+                    })
         
         return {
             "fact_check_results": results,
