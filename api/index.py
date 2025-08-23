@@ -22,30 +22,58 @@ def extract_text_from_url(url):
         
         # Special handling for Twitter/X
         if 'twitter.com' in url or 'x.com' in url:
-            # Try to extract tweet content from meta tags
             content = response.text
             
-            # Look for meta description or og:description
+            # First, try to extract from meta tags (most reliable)
             meta_patterns = [
                 r'<meta[^>]*name="description"[^>]*content="([^"]*)"',
                 r'<meta[^>]*property="og:description"[^>]*content="([^"]*)"',
-                r'<meta[^>]*name="twitter:description"[^>]*content="([^"]*)"'
+                r'<meta[^>]*name="twitter:description"[^>]*content="([^"]*)"',
+                r'<meta[^>]*property="twitter:description"[^>]*content="([^"]*)"'
             ]
             
             for pattern in meta_patterns:
                 match = re.search(pattern, content, re.IGNORECASE)
                 if match:
                     extracted_text = match.group(1)
-                    if extracted_text and len(extracted_text) > 20:
+                    # Clean up the extracted text
+                    extracted_text = re.sub(r'&[a-zA-Z]+;', ' ', extracted_text)  # Remove HTML entities
+                    extracted_text = re.sub(r'\s+', ' ', extracted_text).strip()
+                    if extracted_text and len(extracted_text) > 20 and 'javascript' not in extracted_text.lower():
                         return extracted_text
             
-            # Fallback: look for tweet text in the page
-            tweet_pattern = r'<div[^>]*class="[^"]*tweet[^"]*"[^>]*>.*?<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>'
-            match = re.search(tweet_pattern, content, re.DOTALL | re.IGNORECASE)
-            if match:
-                tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
-                if tweet_text and len(tweet_text) > 20:
-                    return tweet_text
+            # Try to extract tweet text from various patterns
+            tweet_patterns = [
+                r'<div[^>]*class="[^"]*tweet[^"]*"[^>]*>.*?<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>',
+                r'<div[^>]*data-testid="tweetText"[^>]*>(.*?)</div>',
+                r'<span[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</span>',
+                r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>'
+            ]
+            
+            for pattern in tweet_patterns:
+                match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
+                if match:
+                    tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
+                    tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
+                    tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
+                    if tweet_text and len(tweet_text) > 20 and 'javascript' not in tweet_text.lower():
+                        return tweet_text
+            
+            # If we still can't get the tweet, try to get any meaningful text
+            # Look for text that doesn't contain JavaScript errors
+            lines = content.split('\n')
+            meaningful_lines = []
+            for line in lines:
+                line = re.sub(r'<[^>]+>', '', line).strip()
+                if (line and len(line) > 20 and 
+                    'javascript' not in line.lower() and 
+                    'enable javascript' not in line.lower() and
+                    'browser' not in line.lower() and
+                    'error' not in line.lower()):
+                    meaningful_lines.append(line)
+            
+            if meaningful_lines:
+                return ' '.join(meaningful_lines[:3])  # Take first 3 meaningful lines
         
         # General text extraction
         text = response.text
