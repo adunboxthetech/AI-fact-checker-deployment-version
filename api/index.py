@@ -348,9 +348,6 @@ def fact_check_text(text):
                 if clean_content.startswith('json '):
                     clean_content = clean_content[5:].strip()
                 
-                # Debug: log what we're trying to parse
-                print(f"Attempting to parse: {clean_content[:200]}...")
-                
                 parsed = json.loads(clean_content)
                 # Format for frontend: create fact_check_results array
                 fact_check_result = {
