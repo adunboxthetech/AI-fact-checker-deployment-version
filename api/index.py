@@ -210,6 +210,47 @@ def extract_text_from_url(url):
                         ';' not in match[-10:]):   # Avoid CSS statements at the end
                         return match
             
+            # Strategy 9: Look for text that resembles actual tweet content
+            # Split content into chunks and analyze each one
+            chunks = re.split(r'[{}:;]', clean_content)
+            for chunk in chunks:
+                chunk = chunk.strip()
+                # Look for chunks that look like real text (not CSS/JS)
+                if (chunk and len(chunk) > 50 and
+                    chunk.count(' ') > 5 and  # Multiple words
+                    chunk.count('a') > 3 and   # Contains common letters
+                    chunk.count('e') > 3 and
+                    not any(css_word in chunk.lower() for css_word in ['background', 'color', 'border', 'margin', 'padding', 'font', 'display', 'position']) and
+                    not any(js_word in chunk.lower() for js_word in ['function', 'var', 'const', 'let', 'return', 'if', 'for', 'while', 'import', 'export']) and
+                    not chunk.startswith('#') and
+                    not chunk.startswith('.') and
+                    not chunk.startswith('@') and
+                    not chunk.startswith('http')):
+                    return chunk
+            
+            # Strategy 10: Try to extract from any remaining text that looks human-readable
+            # Look for the longest piece of text that doesn't contain obvious CSS/JS markers
+            remaining_text = clean_content
+            # Remove obvious CSS/JS patterns
+            remaining_text = re.sub(r'[{}:;]', ' ', remaining_text)
+            remaining_text = re.sub(r'\s+', ' ', remaining_text).strip()
+            
+            # Split into sentences and find the longest meaningful one
+            sentences = re.split(r'[.!?]', remaining_text)
+            best_sentence = ""
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if (sentence and len(sentence) > 30 and
+                    sentence.count(' ') > 3 and
+                    not any(bad_word in sentence.lower() for bad_word in ['javascript', 'css', 'error', 'script', 'function', 'var', 'const', 'let']) and
+                    not sentence.startswith('#') and
+                    not sentence.startswith('.') and
+                    len(sentence) > len(best_sentence)):
+                    best_sentence = sentence
+            
+            if best_sentence:
+                return best_sentence
+            
             # If all strategies fail, provide a comprehensive error message
             raise ValueError("Unable to extract tweet content from this Twitter/X URL. Twitter/X heavily relies on JavaScript to load content dynamically, making it difficult to extract content from direct URL requests. This is a common limitation with modern social media platforms.")
         
