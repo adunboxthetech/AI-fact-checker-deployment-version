@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 import re
 from readability import Document
 from bs4 import BeautifulSoup
+from api.index import extract_content_from_url as extract_content_and_images
 
 # Load environment variables (only if .env file exists)
 try:
@@ -277,8 +278,9 @@ def fact_check():
             if not is_valid_url(candidate_url):
                 return jsonify({"error": "Invalid URL. Only http(s) URLs are supported."}), 400
             try:
-                extraction = extract_text_from_url(candidate_url)
-                input_text = extraction["text"]
+                content = extract_content_and_images(candidate_url)
+                input_text = content["text"]
+                image_urls = content.get("image_urls", [])
                 source_url = candidate_url
             except Exception as e:
                 return jsonify({"error": f"Failed to extract content from URL: {str(e)}"}), 400
@@ -292,20 +294,63 @@ def fact_check():
         # Extract claims from input text
         claims = fact_checker.extract_claims(input_text)
         
-        # Fact-check each claim
-        results = []
+        # Fact-check each text claim
+        text_results = []
         for claim in claims:
             if claim.strip():
                 fact_check_result = fact_checker.fact_check_claim(claim)
-                results.append({
+                text_results.append({
                     "claim": claim,
                     "result": fact_check_result
                 })
-        
+
+        # Fact-check each image URL
+        image_results = []
+        if 'image_urls' in locals() and image_urls:
+            for img_url in image_urls:
+                try:
+                    # Use the same logic as in /fact-check-image
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Analyze this image. Extract all factual claims that a third-party could verify. Return ONLY the claims as a numbered list."},
+                                {"type": "image_url", "image_url": img_url}
+                            ]
+                        }
+                    ]
+                    payload = {
+                        "model": "sonar-pro",
+                        "messages": messages,
+                        "max_tokens": 500,
+                    }
+                    sonar_resp = requests.post(PERPLEXITY_URL, headers=fact_checker.headers, json=payload, timeout=30)
+                    
+                    if sonar_resp.status_code == 200:
+                        content = sonar_resp.json()['choices'][0]['message']['content']
+                        img_claims = [line.strip() for line in content.split('\n') if line.strip() and any(c.isdigit() for c in line[:3])]
+                        if not img_claims:
+                            img_claims = [content.strip()]
+                        
+                        img_claim_results = []
+                        for claim in img_claims:
+                            if claim.strip():
+                                fc = fact_checker.fact_check_claim(claim)
+                                img_claim_results.append({"claim": claim, "result": fc})
+                        
+                        image_results.append({
+                            "image_url": img_url,
+                            "claims_found": len(img_claim_results),
+                            "fact_check_results": img_claim_results
+                        })
+                except Exception as e:
+                    image_results.append({"image_url": img_url, "error": str(e)})
+
         return jsonify({
             "original_text": input_text,
-            "claims_found": len(results),
-            "fact_check_results": results,
+            "claims_found": len(text_results),
+            "fact_check_results": text_results,
+            "image_analysis_results": image_results,
             "timestamp": time.time(),
             "source_url": source_url
         })
