@@ -24,12 +24,44 @@ def extract_text_from_url(url):
     }
     
     try:
+        parsed_url = urlparse(url)
         response = requests.get(url, headers=headers, timeout=20)
         if response.status_code != 200:
+            # Domain-specific and universal fallbacks before failing
+            if parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
+                try:
+                    json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+                    rj_headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                        "Accept": "application/json"
+                    }
+                    rj = requests.get(json_url, headers=rj_headers, timeout=12)
+                    if rj.status_code == 200:
+                        data = rj.json()
+                        # Standard post JSON: [post, comments]
+                        try:
+                            post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
+                            title = post.get("title", "")
+                            selftext = post.get("selftext", "") or post.get("body", "")
+                            text = f"{title}. {selftext}".strip()
+                            if len(text) > 30:
+                                return text
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            # Jina Reader fallback for any domain
+            try:
+                q = f"?{parsed_url.query}" if parsed_url.query else ""
+                wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
+                jr = requests.get(wrapped, headers=headers, timeout=18)
+                if jr.status_code == 200 and len(jr.text.strip()) > 50:
+                    return re.sub(r'\s+', ' ', jr.text).strip()
+            except Exception:
+                pass
             raise ValueError(f"Failed to fetch URL (status {response.status_code})")
         
         # Special handling for Twitter/X using syndication endpoint (WORKING METHOD)
-        parsed_url = urlparse(url)
         if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com", "m.twitter.com"} and "/status/" in parsed_url.path:
             m = re.search(r"/status/(\d+)", parsed_url.path)
             if m:
@@ -187,6 +219,17 @@ def extract_text_from_url(url):
                 if len(text) > 30:
                     break
         
+        # Try Jina Reader as last resort if content seems blocked/too short
+        if len(text) < 100 or 'enable javascript' in response.text.lower() or 'cookies' in response.text.lower():
+            try:
+                q = f"?{parsed_url.query}" if parsed_url.query else ""
+                wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
+                jr = requests.get(wrapped, headers=headers, timeout=18)
+                if jr.status_code == 200 and len(jr.text.strip()) > 50:
+                    text = re.sub(r'\s+', ' ', jr.text).strip()
+            except Exception:
+                pass
+        
         # Limit length
         if len(text) > 8000:
             text = text[:8000] + "…"
@@ -212,38 +255,41 @@ def extract_content_from_url(url):
     }
     
     try:
+        parsed_url = urlparse(url)
         response = requests.get(url, headers=headers, timeout=20)
         if response.status_code != 200:
-            raise ValueError(f"Failed to fetch URL (status {response.status_code})")
-        
-        # Parse HTML content
-        soup = BeautifulSoup(response.text, 'lxml')
-        
-        # Extract text content (existing logic)
-        text = extract_text_from_url(url)
+            # Fall back to robust text extractor (handles Reddit JSON and Jina Reader)
+            text = extract_text_from_url(url)
+            soup = BeautifulSoup('', 'lxml')
+        else:
+            # Parse HTML content
+            soup = BeautifulSoup(response.text, 'lxml')
+            
+            # Extract text content (existing logic)
+            text = extract_text_from_url(url)
         
         # Extract image URLs using multiple strategies
         image_urls = []
-        parsed_url = urlparse(url)
         
-        # Strategy 1: Extract from HTML img tags
-        for img in soup.find_all('img'):
-            src = img.get('src') or img.get('data-src') or img.get('data-original')
-            if src:
-                # Convert relative URLs to absolute
-                if src.startswith('//'):
-                    src = 'https:' + src
-                elif src.startswith('/'):
-                    src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
-                elif not src.startswith('http'):
-                    src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
-                
-                # Filter out small images, icons, and common non-content images
-                if (src and 
-                    not any(skip in src.lower() for skip in ['avatar', 'icon', 'logo', 'emoji', 'favicon', 'analytics', 'tracking', 'ads']) and
-                    not any(skip in img.get('class', []) for skip in ['avatar', 'icon', 'logo', 'emoji']) and
-                    not any(skip in img.get('alt', '').lower() for skip in ['avatar', 'icon', 'logo', 'emoji'])):
-                    image_urls.append(src)
+        # Strategy 1: Extract from HTML img tags (only if we have HTML)
+        if soup and soup.find_all:
+            for img in soup.find_all('img'):
+                src = img.get('src') or img.get('data-src') or img.get('data-original')
+                if src:
+                    # Convert relative URLs to absolute
+                    if src.startswith('//'):
+                        src = 'https:' + src
+                    elif src.startswith('/'):
+                        src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
+                    elif not src.startswith('http'):
+                        src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
+                    
+                    # Filter out small images, icons, and common non-content images
+                    if (src and 
+                        not any(skip in src.lower() for skip in ['avatar', 'icon', 'logo', 'emoji', 'favicon', 'analytics', 'tracking', 'ads']) and
+                        not any(skip in img.get('class', []) for skip in ['avatar', 'icon', 'logo', 'emoji']) and
+                        not any(skip in (img.get('alt', '') or '').lower() for skip in ['avatar', 'icon', 'logo', 'emoji'])):
+                        image_urls.append(src)
         
         # Strategy 2: Platform-specific extraction
         platform_images = extract_platform_specific_images(url, parsed_url, headers, text)
@@ -254,8 +300,9 @@ def extract_content_from_url(url):
         image_urls.extend(text_image_urls)
         
         # Strategy 4: Look for Open Graph and Twitter Card images
-        og_images = extract_og_images(soup, parsed_url)
-        image_urls.extend(og_images)
+        if soup and soup.find_all:
+            og_images = extract_og_images(soup, parsed_url)
+            image_urls.extend(og_images)
         
         # Remove duplicates and filter
         unique_images = []
