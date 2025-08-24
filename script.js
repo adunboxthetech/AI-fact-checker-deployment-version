@@ -256,6 +256,14 @@ class FactCheckerApp {
                 title.innerHTML = `<i class="fas fa-file-lines"></i> <strong>Title:</strong> ${data.source_title}`;
                 this.resultsContainer.appendChild(title);
             }
+            if (typeof data.images_detected === 'number' && data.images_detected >= 0) {
+                const imgInfo = document.createElement('div');
+                imgInfo.style.margin = '4px 0 12px';
+                imgInfo.style.color = 'var(--muted)';
+                imgInfo.style.fontSize = '0.9rem';
+                imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. ${data.images_detected > 0 ? 'Visual content was considered in the analysis.' : 'No images detected.'}`;
+                this.resultsContainer.appendChild(imgInfo);
+            }
         }
 
         if (!data.fact_check_results || data.fact_check_results.length === 0) {
