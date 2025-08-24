@@ -38,6 +38,24 @@ REDDIT_HEADERS = {
     "Cache-Control": "max-age=0"
 }
 
+# Additional headers that mimic real browser behavior
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"'
+}
+
 def process_image_url(image_url):
     """Process image URL to handle redirects and protected URLs"""
     if not image_url:
@@ -61,6 +79,21 @@ def process_image_url(image_url):
         return image_url
     except Exception:
         return image_url
+
+def _extract_reddit_post_id(url: str) -> str:
+    """Extract Reddit post ID from URL"""
+    # Handle various Reddit URL formats
+    patterns = [
+        r'/comments/([a-zA-Z0-9]+)/',
+        r'/r/\w+/comments/([a-zA-Z0-9]+)/',
+        r'redd\.it/([a-zA-Z0-9]+)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
 def _build_reddit_json_url(url: str) -> str:
     pu = urlparse(url)
@@ -112,28 +145,36 @@ def extract_content_from_url(url: str) -> dict:
                 except Exception:
                     pass # Fallback to generic scraper if API fails
 
-        # Reddit handler - improved with better error handling and fallbacks
+        # Reddit handler - completely rewritten with multiple robust approaches
         elif 'reddit.com' in netloc or 'redd.it' in netloc:
-            # Try multiple approaches for Reddit
+            # Try multiple approaches for Reddit with better error handling
             approaches = [
-                # Approach 1: Try JSON API with enhanced headers
-                lambda: _try_reddit_json_api(url),
-                # Approach 2: Try mobile version
-                lambda: _try_reddit_mobile(url),
-                # Approach 3: Try old.reddit.com
-                lambda: _try_old_reddit(url),
-                # Approach 4: Generic scraper as last resort
-                lambda: _try_generic_reddit_scraper(url)
+                # Approach 1: Try Reddit API with post ID
+                lambda: _try_reddit_api_with_id(url),
+                # Approach 2: Try JSON API with rotating headers
+                lambda: _try_reddit_json_api_robust(url),
+                # Approach 3: Try with different User-Agents
+                lambda: _try_reddit_with_rotating_ua(url),
+                # Approach 4: Try mobile version with enhanced headers
+                lambda: _try_reddit_mobile_enhanced(url),
+                # Approach 5: Try old.reddit.com with robust headers
+                lambda: _try_old_reddit_robust(url),
+                # Approach 6: Try with session and cookies
+                lambda: _try_reddit_with_session(url),
+                # Approach 7: Generic scraper as last resort
+                lambda: _try_generic_reddit_scraper_robust(url)
             ]
             
-            for approach in approaches:
+            for i, approach in enumerate(approaches):
                 try:
                     result = approach()
-                    if result and result.get('text'):
+                    if result and result.get('text') and len(result['text'].strip()) > 10:
                         text_content = result['text']
                         image_urls = result.get('images', [])
+                        print(f"Reddit extraction succeeded with approach {i+1}")
                         break
-                except Exception:
+                except Exception as e:
+                    print(f"Reddit approach {i+1} failed: {str(e)}")
                     continue
 
         # Generic URL handler (fallback for social media or primary for other sites)
@@ -181,47 +222,136 @@ def extract_content_from_url(url: str) -> dict:
         "image_urls": final_images[:10] # Limit to 10 images
     }
 
-def _try_reddit_json_api(url: str) -> dict:
-    """Try Reddit's JSON API with enhanced headers"""
-    json_url = _build_reddit_json_url(url)
+def _try_reddit_api_with_id(url: str) -> dict:
+    """Try to extract content using Reddit post ID and API"""
+    post_id = _extract_reddit_post_id(url)
+    if not post_id:
+        return None
+    
     try:
-        r = requests.get(json_url, headers=REDDIT_HEADERS, timeout=10)
+        # Try Reddit's oEmbed API
+        oembed_url = f"https://www.reddit.com/oembed?url={url}"
+        r = requests.get(oembed_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            post_data = data[0]['data']['children'][0]['data']
-            text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
+            text_content = data.get('title', '')
+            if data.get('description'):
+                text_content += f" {data['description']}"
             
             image_urls = []
-            # Extract images from various Reddit structures
-            if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
-                image_urls.append(post_data['url_overridden_by_dest'])
-            if 'preview' in post_data:
-                for img in post_data['preview'].get('images', []):
-                    image_urls.append(img['source']['url'].replace('&amp;', '&'))
-            if 'media_metadata' in post_data:
-                for media_id in post_data['media_metadata']:
-                    media = post_data['media_metadata'][media_id]
-                    if media['e'] == 'Image':
-                        image_urls.append(media['s']['u'].replace('&amp;', '&'))
+            if data.get('thumbnail_url'):
+                image_urls.append(data['thumbnail_url'])
             
             return {"text": text_content, "images": image_urls}
     except Exception:
         pass
+    
     return None
 
-def _try_reddit_mobile(url: str) -> dict:
-    """Try Reddit's mobile version"""
+def _try_reddit_json_api_robust(url: str) -> dict:
+    """Try Reddit's JSON API with multiple header variations"""
+    json_url = _build_reddit_json_url(url)
+    
+    # Try different header combinations
+    header_sets = [
+        REDDIT_HEADERS,
+        BROWSER_HEADERS,
+        {**REDDIT_HEADERS, "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
+        {**REDDIT_HEADERS, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0"}
+    ]
+    
+    for headers in header_sets:
+        try:
+            r = requests.get(json_url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                post_data = data[0]['data']['children'][0]['data']
+                text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
+                
+                image_urls = []
+                # Extract images from various Reddit structures
+                if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
+                    image_urls.append(post_data['url_overridden_by_dest'])
+                if 'preview' in post_data:
+                    for img in post_data['preview'].get('images', []):
+                        image_urls.append(img['source']['url'].replace('&amp;', '&'))
+                if 'media_metadata' in post_data:
+                    for media_id in post_data['media_metadata']:
+                        media = post_data['media_metadata'][media_id]
+                        if media['e'] == 'Image':
+                            image_urls.append(media['s']['u'].replace('&amp;', '&'))
+                
+                return {"text": text_content, "images": image_urls}
+        except Exception:
+            continue
+    
+    return None
+
+def _try_reddit_with_rotating_ua(url: str) -> dict:
+    """Try Reddit with rotating User-Agents"""
+    user_agents = [
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15"
+    ]
+    
+    for ua in user_agents:
+        try:
+            headers = {**BROWSER_HEADERS, "User-Agent": ua}
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                soup = BeautifulSoup(r.text, 'lxml')
+                
+                # Try to extract title and content
+                title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+                content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
+                
+                title = title_elem.get_text().strip() if title_elem else ""
+                content = content_elem.get_text().strip() if content_elem else ""
+                
+                text_content = f"{title} {content}".strip()
+                
+                # Extract images
+                image_urls = []
+                for img in soup.find_all('img'):
+                    src = img.get('src')
+                    if src and _is_image_like(src):
+                        image_urls.append(_resolve_url(url, src))
+                
+                if text_content:
+                    return {"text": text_content, "images": image_urls}
+        except Exception:
+            continue
+    
+    return None
+
+def _try_reddit_mobile_enhanced(url: str) -> dict:
+    """Try Reddit's mobile version with enhanced headers"""
     try:
         mobile_url = url.replace('www.reddit.com', 'm.reddit.com')
-        r = requests.get(mobile_url, headers=REDDIT_HEADERS, timeout=10)
+        r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'lxml')
-            # Extract title and content from mobile version
-            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
-            content_elem = soup.find('div', class_='content') or soup.find('div', class_='post-content')
             
-            title = title_elem.get_text().strip() if title_elem else ""
-            content = content_elem.get_text().strip() if content_elem else ""
+            # Enhanced selectors for mobile Reddit
+            title_selectors = ['h1', 'h2', 'h3', '[data-testid="post-title"]', '.title']
+            content_selectors = ['.content', '.post-content', '[data-testid="post-content"]', '.RichTextJSON-root']
+            
+            title = ""
+            for selector in title_selectors:
+                title_elem = soup.select_one(selector)
+                if title_elem:
+                    title = title_elem.get_text().strip()
+                    break
+            
+            content = ""
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    content = content_elem.get_text().strip()
+                    break
             
             text_content = f"{title} {content}".strip()
             
@@ -237,16 +367,17 @@ def _try_reddit_mobile(url: str) -> dict:
         pass
     return None
 
-def _try_old_reddit(url: str) -> dict:
-    """Try old.reddit.com version"""
+def _try_old_reddit_robust(url: str) -> dict:
+    """Try old.reddit.com with robust headers"""
     try:
         old_url = url.replace('www.reddit.com', 'old.reddit.com')
-        r = requests.get(old_url, headers=REDDIT_HEADERS, timeout=10)
+        r = requests.get(old_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'lxml')
-            # Extract title and content from old Reddit
-            title_elem = soup.find('a', class_='title') or soup.find('h1')
-            content_elem = soup.find('div', class_='usertext-body') or soup.find('div', class_='expando')
+            
+            # Enhanced selectors for old Reddit
+            title_elem = soup.find('a', class_='title') or soup.find('h1') or soup.find('h2')
+            content_elem = soup.find('div', class_='usertext-body') or soup.find('div', class_='expando') or soup.find('div', class_='md')
             
             title = title_elem.get_text().strip() if title_elem else ""
             content = content_elem.get_text().strip() if content_elem else ""
@@ -265,27 +396,67 @@ def _try_old_reddit(url: str) -> dict:
         pass
     return None
 
-def _try_generic_reddit_scraper(url: str) -> dict:
-    """Generic scraper for Reddit as last resort"""
+def _try_reddit_with_session(url: str) -> dict:
+    """Try Reddit with session and cookies"""
     try:
-        r = requests.get(url, headers=REDDIT_HEADERS, timeout=15)
+        session = requests.Session()
+        session.headers.update(BROWSER_HEADERS)
+        
+        # First, visit the main page to get cookies
+        session.get('https://www.reddit.com', timeout=10)
+        
+        # Then try to access the specific post
+        r = session.get(url, timeout=10)
         if r.status_code == 200:
-            html = r.text
-            doc = Document(html)
-            text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
-            if len(text_content) < 150:
-                text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+            soup = BeautifulSoup(r.text, 'lxml')
             
-            soup = BeautifulSoup(html, 'lxml')
+            # Try to extract content
+            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
+            
+            title = title_elem.get_text().strip() if title_elem else ""
+            content = content_elem.get_text().strip() if content_elem else ""
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Extract images
             image_urls = []
             for img in soup.find_all('img'):
-                src = img.get('src') or img.get('data-src')
+                src = img.get('src')
                 if src and _is_image_like(src):
                     image_urls.append(_resolve_url(url, src))
             
             return {"text": text_content, "images": image_urls}
     except Exception:
         pass
+    return None
+
+def _try_generic_reddit_scraper_robust(url: str) -> dict:
+    """Generic scraper for Reddit as last resort with multiple attempts"""
+    header_sets = [BROWSER_HEADERS, REDDIT_HEADERS]
+    
+    for headers in header_sets:
+        try:
+            r = requests.get(url, headers=headers, timeout=15)
+            if r.status_code == 200:
+                html = r.text
+                doc = Document(html)
+                text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
+                if len(text_content) < 150:
+                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+                
+                soup = BeautifulSoup(html, 'lxml')
+                image_urls = []
+                for img in soup.find_all('img'):
+                    src = img.get('src') or img.get('data-src')
+                    if src and _is_image_like(src):
+                        image_urls.append(_resolve_url(url, src))
+                
+                if text_content and len(text_content.strip()) > 10:
+                    return {"text": text_content, "images": image_urls}
+        except Exception:
+            continue
+    
     return None
 
 def fact_check_text(text):
