@@ -54,9 +54,17 @@ class FactCheckerApp {
     async loadImages(files) {
         // Single image for now
         const file = files[0];
+        
+        // Check file size (limit to 5MB)
+        if (file.size > 5 * 1024 * 1024) {
+            alert('Image file is too large. Please use an image smaller than 5MB.');
+            return;
+        }
+        
         const reader = new FileReader();
         reader.onload = () => {
             this.imageDataUrl = reader.result;
+            console.log('Image loaded, size:', this.imageDataUrl.length, 'characters');
             this.renderImagePreview(this.imageDataUrl);
         };
         reader.readAsDataURL(file);
@@ -154,11 +162,18 @@ class FactCheckerApp {
         try {
             let response;
             if (hasImage) {
+                console.log('Sending image for analysis...');
+                const payload = { image_data_url: this.imageDataUrl };
+                console.log('Payload size:', JSON.stringify(payload).length, 'characters');
+                
                 response = await fetch(`${this.apiUrl}/api/fact-check-image`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image_data_url: this.imageDataUrl })
+                    body: JSON.stringify(payload)
                 });
+                
+                console.log('Response status:', response.status);
+                console.log('Response headers:', Object.fromEntries(response.headers.entries()));
             } else {
                 const payload = this.buildPayload(text);
                 response = await fetch(`${this.apiUrl}/fact-check`, {
@@ -168,13 +183,19 @@ class FactCheckerApp {
                 });
             }
 
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('HTTP Error:', response.status, errorText);
+                throw new Error(`HTTP ${response.status}: ${errorText}`);
+            }
+            
             const data = await response.json();
+            console.log('Response data:', data);
 
             this.displayResults(data);
         } catch (error) {
             console.error('Fact-check error:', error);
-            this.showError('Failed to fact-check. Please check your connection and try again.');
+            this.showError(`Failed to fact-check: ${error.message}`);
         } finally {
             this.hideLoading();
         }
