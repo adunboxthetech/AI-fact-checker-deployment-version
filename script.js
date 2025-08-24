@@ -264,6 +264,20 @@ class FactCheckerApp {
                 imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. ${data.images_detected > 0 ? 'Visual content was considered in the analysis.' : 'No images detected.'}`;
                 this.resultsContainer.appendChild(imgInfo);
             }
+            const selected = data.selected_image_url || (Array.isArray(data.debug_image_urls) && data.debug_image_urls.length ? data.debug_image_urls[0] : null);
+            if (selected) {
+                const thumbWrap = document.createElement('div');
+                thumbWrap.style.margin = '6px 0 14px';
+                thumbWrap.innerHTML = `
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <img src="${this.escapeAttribute(selected)}" alt="Analyzed image" style="max-height:80px;border-radius:6px;border:1px solid var(--border);"/>
+                        <a href="${this.escapeAttribute(selected)}" target="_blank" rel="noopener" class="source-link">
+                            <i class="fas fa-up-right-from-square"></i> Open analyzed image
+                        </a>
+                    </div>
+                `;
+                this.resultsContainer.appendChild(thumbWrap);
+            }
         }
 
         if (!data.fact_check_results || data.fact_check_results.length === 0) {
