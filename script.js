@@ -166,7 +166,11 @@ class FactCheckerApp {
                 const payload = { image_data_url: this.imageDataUrl };
                 console.log('Payload size:', JSON.stringify(payload).length, 'characters');
                 
-                response = await fetch(`${this.apiUrl}/api/fact-check-image`, {
+                const url = `${this.apiUrl}/api/fact-check-image`;
+                console.log('Calling URL:', url);
+                console.log('API URL base:', this.apiUrl);
+                
+                response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
