@@ -113,10 +113,20 @@ def _is_image_like(url: str) -> bool:
     if not isinstance(url, str):
         return False
     pu = urlparse(url)
-    if re.search(r'\.(jpg|jpeg|png|gif|webp)$', pu.path, re.I):
+    if re.search(r'\.(jpg|jpeg|png|gif|webp|svg)$', pu.path, re.I):
         return True
     # Allow known image hosts even without extension
-    return any(h in pu.netloc for h in ["pbs.twimg.com", "i.redd.it", "i.imgur.com"])
+    return any(h in pu.netloc for h in [
+        "pbs.twimg.com", 
+        "i.redd.it", 
+        "i.imgur.com",
+        "preview.redd.it",
+        "external-preview.redd.it",
+        "images.redd.it",
+        "media.redd.it",
+        "redditmedia.com",
+        "redditstatic.com"
+    ])
 
 def extract_content_from_url(url: str) -> dict:
     """Extracts text and image URLs from a given URL with platform-specific logic."""
@@ -269,19 +279,79 @@ def _try_reddit_json_api_robust(url: str) -> dict:
                 text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
                 
                 image_urls = []
-                # Extract images from various Reddit structures
+                
+                # Enhanced image extraction for Reddit posts
+                
+                # 1. Direct image URL (if post is an image)
                 if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
                     image_urls.append(post_data['url_overridden_by_dest'])
-                if 'preview' in post_data:
-                    for img in post_data['preview'].get('images', []):
-                        image_urls.append(img['source']['url'].replace('&amp;', '&'))
+                
+                # 2. Preview images (most common for image posts)
+                if 'preview' in post_data and post_data['preview'].get('images'):
+                    for img in post_data['preview']['images']:
+                        if img.get('source') and img['source'].get('url'):
+                            # Clean up Reddit image URLs
+                            img_url = img['source']['url'].replace('&amp;', '&')
+                            # Handle Reddit's image proxy URLs
+                            if 'preview.redd.it' in img_url:
+                                # Convert preview URLs to direct image URLs
+                                img_url = img_url.replace('preview.redd.it', 'i.redd.it')
+                            image_urls.append(img_url)
+                
+                # 3. Media metadata (for gallery posts)
                 if 'media_metadata' in post_data:
                     for media_id in post_data['media_metadata']:
                         media = post_data['media_metadata'][media_id]
-                        if media['e'] == 'Image':
-                            image_urls.append(media['s']['u'].replace('&amp;', '&'))
+                        if media.get('e') == 'Image' and media.get('s'):
+                            # Get the highest quality image URL
+                            if media['s'].get('u'):
+                                img_url = media['s']['u'].replace('&amp;', '&')
+                                image_urls.append(img_url)
+                            elif media['s'].get('gif'):
+                                img_url = media['s']['gif'].replace('&amp;', '&')
+                                image_urls.append(img_url)
                 
-                return {"text": text_content, "images": image_urls}
+                # 4. Gallery data (for newer gallery posts)
+                if 'gallery_data' in post_data and 'media_metadata' in post_data:
+                    for item in post_data['gallery_data'].get('items', []):
+                        media_id = item.get('media_id')
+                        if media_id and media_id in post_data['media_metadata']:
+                            media = post_data['media_metadata'][media_id]
+                            if media.get('e') == 'Image' and media.get('s'):
+                                if media['s'].get('u'):
+                                    img_url = media['s']['u'].replace('&amp;', '&')
+                                    image_urls.append(img_url)
+                
+                # 5. Crosspost images (if this is a crosspost)
+                if post_data.get('crosspost_parent') and 'crosspost_parent_list' in post_data:
+                    for crosspost in post_data['crosspost_parent_list']:
+                        if crosspost.get('url_overridden_by_dest') and _is_image_like(crosspost['url_overridden_by_dest']):
+                            image_urls.append(crosspost['url_overridden_by_dest'])
+                        if 'preview' in crosspost and crosspost['preview'].get('images'):
+                            for img in crosspost['preview']['images']:
+                                if img.get('source') and img['source'].get('url'):
+                                    img_url = img['source']['url'].replace('&amp;', '&')
+                                    image_urls.append(img_url)
+                
+                # 6. Thumbnail (fallback)
+                if post_data.get('thumbnail') and _is_image_like(post_data['thumbnail']):
+                    image_urls.append(post_data['thumbnail'])
+                
+                # 7. Secure media (for some image posts)
+                if post_data.get('secure_media') and post_data['secure_media'].get('oembed'):
+                    oembed = post_data['secure_media']['oembed']
+                    if oembed.get('thumbnail_url'):
+                        image_urls.append(oembed['thumbnail_url'])
+                
+                # Remove duplicates and filter valid image URLs
+                unique_images = []
+                seen_urls = set()
+                for img_url in image_urls:
+                    if img_url and img_url not in seen_urls and _is_image_like(img_url):
+                        unique_images.append(img_url)
+                        seen_urls.add(img_url)
+                
+                return {"text": text_content, "images": unique_images}
         except Exception:
             continue
     
@@ -355,14 +425,55 @@ def _try_reddit_mobile_enhanced(url: str) -> dict:
             
             text_content = f"{title} {content}".strip()
             
-            # Extract images
+            # Enhanced image extraction for mobile Reddit
             image_urls = []
-            for img in soup.find_all('img'):
-                src = img.get('src')
-                if src and _is_image_like(src):
-                    image_urls.append(_resolve_url(url, src))
             
-            return {"text": text_content, "images": image_urls}
+            # Look for images in various mobile Reddit patterns
+            img_selectors = [
+                'img[src*="i.redd.it"]',
+                'img[src*="preview.redd.it"]',
+                'img[src*="external-preview.redd.it"]',
+                'img[src*="images.redd.it"]',
+                'img[src*="media.redd.it"]',
+                'img[src*="redditmedia.com"]',
+                'img[src*="redditstatic.com"]',
+                'img[src*="imgur.com"]',
+                'img[data-src*="i.redd.it"]',
+                'img[data-src*="preview.redd.it"]',
+                'img[data-src*="imgur.com"]',
+                '.post-image img',
+                '.image-post img',
+                '.gallery img',
+                '.media img'
+            ]
+            
+            for selector in img_selectors:
+                for img in soup.select(selector):
+                    src = img.get('src') or img.get('data-src')
+                    if src and _is_image_like(src):
+                        # Clean up Reddit image URLs
+                        if 'preview.redd.it' in src:
+                            src = src.replace('preview.redd.it', 'i.redd.it')
+                        image_urls.append(_resolve_url(url, src))
+            
+            # Also look for background images in CSS
+            for elem in soup.find_all(style=True):
+                style_content = elem.get_text()
+                # Extract URLs from CSS background-image properties
+                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
+                for bg_url in bg_urls:
+                    if _is_image_like(bg_url):
+                        image_urls.append(_resolve_url(url, bg_url))
+            
+            # Remove duplicates
+            unique_images = []
+            seen_urls = set()
+            for img_url in image_urls:
+                if img_url and img_url not in seen_urls:
+                    unique_images.append(img_url)
+                    seen_urls.add(img_url)
+            
+            return {"text": text_content, "images": unique_images}
     except Exception:
         pass
     return None
@@ -384,14 +495,63 @@ def _try_old_reddit_robust(url: str) -> dict:
             
             text_content = f"{title} {content}".strip()
             
-            # Extract images
+            # Enhanced image extraction for old Reddit
             image_urls = []
-            for img in soup.find_all('img'):
-                src = img.get('src')
-                if src and _is_image_like(src):
-                    image_urls.append(_resolve_url(url, src))
             
-            return {"text": text_content, "images": image_urls}
+            # Look for images in various old Reddit patterns
+            img_selectors = [
+                'img[src*="i.redd.it"]',
+                'img[src*="preview.redd.it"]',
+                'img[src*="external-preview.redd.it"]',
+                'img[src*="images.redd.it"]',
+                'img[src*="media.redd.it"]',
+                'img[src*="redditmedia.com"]',
+                'img[src*="redditstatic.com"]',
+                'img[src*="imgur.com"]',
+                '.expando img',
+                '.usertext-body img',
+                '.md img',
+                '.post-image img',
+                '.image-post img',
+                '.gallery img',
+                '.media img',
+                '.thumbnail img',
+                '.link img'
+            ]
+            
+            for selector in img_selectors:
+                for img in soup.select(selector):
+                    src = img.get('src') or img.get('data-src')
+                    if src and _is_image_like(src):
+                        # Clean up Reddit image URLs
+                        if 'preview.redd.it' in src:
+                            src = src.replace('preview.redd.it', 'i.redd.it')
+                        image_urls.append(_resolve_url(url, src))
+            
+            # Look for links that point to images
+            for link in soup.find_all('a', href=True):
+                href = link.get('href')
+                if href and _is_image_like(href):
+                    image_urls.append(_resolve_url(url, href))
+            
+            # Also look for background images in CSS
+            for elem in soup.find_all(style=True):
+                style_content = elem.get_text()
+                # Extract URLs from CSS background-image properties
+                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
+                for bg_url in bg_urls:
+                    if _is_image_like(bg_url):
+                        image_urls.append(_resolve_url(url, bg_url))
+            
+            # Remove duplicates
+            unique_images = []
+            seen_urls = set()
+            for img_url in image_urls:
+                if img_url and img_url not in seen_urls:
+                    unique_images.append(img_url)
+                    seen_urls.add(img_url)
+            
+            return {"text": text_content, "images": unique_images}
     except Exception:
         pass
     return None
