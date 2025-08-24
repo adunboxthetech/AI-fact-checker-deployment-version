@@ -356,18 +356,22 @@ def fact_check_image(image_data_url, image_url):
                 "role": "user",
                 "content": [
                     {"type": "text", "text": (
-                        "Analyze this image and fact-check any factual claims you can identify. "
-                        "Look for text, statistics, dates, names, quotes, or any verifiable statements. "
-                        "If the image contains factual claims, provide a fact-check analysis. "
+                        "You are a visual fact-checking expert. Analyze this image comprehensively using your visual understanding capabilities. "
+                        "Look at the image as a whole - examine charts, graphs, text, images, symbols, and visual elements. "
+                        "Identify any factual claims, statistics, data, or statements that can be verified. "
+                        "For charts/graphs: Analyze the data, labels, sources, and methodology. "
+                        "For text: Read and verify any claims, quotes, or statements. "
+                        "For images: Identify any factual content, dates, names, or verifiable information. "
+                        "If the image contains factual claims, provide a thorough fact-check analysis. "
                         "If the image is purely visual (art, abstract, decorative) with no factual content, indicate this. "
                         "Return ONLY a valid JSON object with this exact structure: "
                         "{"
                         '"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",'
                         '"confidence": 0-100,'
-                        '"explanation": "Your detailed analysis here",'
+                        '"explanation": "Your detailed visual analysis here",'
                         '"sources": ["url1", "url2"]'
                         "}"
-                        "CRITICAL: Return ONLY the JSON object, no other text."
+                        "CRITICAL: Return ONLY the JSON object, no other text. Use your visual understanding to analyze the image content, not just extract text."
                     )}
                 ]
             }
@@ -378,7 +382,7 @@ def fact_check_image(image_data_url, image_url):
             messages[0]["content"].append({"type": "image_url", "image_url": image_url})
 
         payload = {
-            "model": "sonar-pro",  # supports vision per Perplexity docs
+            "model": "llama-3.1-sonar-large-128k-online",  # Better multimodal capabilities
             "messages": messages,
             "max_tokens": 800,
         }
