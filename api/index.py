@@ -338,22 +338,109 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
                     oembed_data = oembed_response.json()
                     if oembed_data.get("html"):
                         oembed_html = oembed_data["html"]
+                        # Extract pic.twitter.com short links first
                         pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', oembed_html)
                         for pic_url in pic_urls:
                             full_pic_url = f"https://{pic_url}"
                             image_urls.append(full_pic_url)
+                        # Also try to extract direct pbs.twimg.com media links
+                        pbs_urls = re.findall(r'https://pbs\.twimg\.com/media/[^"\s>]+', oembed_html)
+                        image_urls.extend(pbs_urls)
+                
+                # Twitter syndication endpoint often includes direct media
+                try:
+                    tw = requests.get(
+                        "https://cdn.syndication.twimg.com/widgets/tweet",
+                        params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
+                    )
+                    if tw.status_code == 200:
+                        data = tw.json()
+                        photos = data.get("photos") or []
+                        for p in photos:
+                            media_url = p.get("url") or p.get("media_url_https") or p.get("media_url")
+                            if media_url:
+                                image_urls.append(media_url)
+                        # Some cards include image under "card" -> binding_values
+                        try:
+                            card = data.get("card") or {}
+                            bindings = card.get("binding_values") or {}
+                            for v in bindings.values():
+                                if isinstance(v, dict) and v.get("type") == "IMAGE" and isinstance(v.get("image_value"), dict):
+                                    u = v["image_value"].get("url")
+                                    if u:
+                                        image_urls.append(u)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
         except Exception:
             pass
     
     # Reddit
     elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com"}:
         try:
-            # Reddit often has direct image URLs in the page
-            reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9]+\.(?:jpg|jpeg|png|gif)', text)
-            image_urls.extend(reddit_images)
+            # Prefer Reddit JSON for reliable media discovery
+            json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+            rj_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "application/json"
+            }
+            rj = requests.get(json_url, headers=rj_headers, timeout=12)
+            if rj.status_code == 200:
+                data = rj.json()
+                try:
+                    post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
+                except Exception:
+                    post = {}
+                
+                # Direct URL field
+                cand = post.get("url_overridden_by_dest") or post.get("url")
+                if isinstance(cand, str) and re.search(r'\.(jpg|jpeg|png|gif|webp)(?:\?|$)', cand, re.I):
+                    image_urls.append(cand)
+                
+                # Preview images
+                preview = post.get("preview") or {}
+                for img in (preview.get("images") or []):
+                    src = (img.get("source") or {}).get("url") or ""
+                    if src:
+                        image_urls.append(src.replace('&amp;', '&'))
+                    for res in (img.get("resolutions") or []):
+                        u = res.get("url")
+                        if u:
+                            image_urls.append(u.replace('&amp;', '&'))
+                
+                # Gallery images
+                media_meta = post.get("media_metadata") or {}
+                gallery = post.get("gallery_data") or {}
+                if media_meta:
+                    if gallery and isinstance(gallery.get("items"), list):
+                        for it in gallery["items"]:
+                            m = media_meta.get(it.get("media_id")) or {}
+                            if isinstance(m, dict):
+                                s = (m.get("s") or {}).get("u") or ""
+                                if s:
+                                    image_urls.append(s.replace('&amp;', '&'))
+                                for p in (m.get("p") or []):
+                                    u = p.get("u")
+                                    if u:
+                                        image_urls.append(u.replace('&amp;', '&'))
+                    else:
+                        for m in media_meta.values():
+                            if isinstance(m, dict):
+                                s = (m.get("s") or {}).get("u") or ""
+                                if s:
+                                    image_urls.append(s.replace('&amp;', '&'))
+                
+                # Secure media thumbnails
+                sm = post.get("secure_media") or {}
+                thumb = (sm.get("oembed") or {}).get("thumbnail_url")
+                if thumb:
+                    image_urls.append(thumb)
             
-            # Also look for imgur links
-            imgur_images = re.findall(r'https://imgur\.com/[a-zA-Z0-9]+', text)
+            # Fallback: regex for i.redd.it and imgur links in text
+            reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif|webp)', text)
+            image_urls.extend(reddit_images)
+            imgur_images = re.findall(r'https://i?\.imgur\.com/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif|webp)', text)
             image_urls.extend(imgur_images)
         except Exception:
             pass
@@ -377,6 +464,36 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
             pass
     
     return image_urls
+
+
+def process_image_url(image_url):
+    """Process image URLs to handle redirects and protected URLs"""
+    try:
+        # For Twitter pic.twitter.com URLs, try to resolve to pbs.twimg.com
+        if 'pic.twitter.com' in image_url:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            try:
+                r = requests.get(image_url, headers=headers, timeout=12, allow_redirects=True)
+                if r.status_code == 200:
+                    m = re.search(r'https://pbs\.twimg\.com/media/[^"\s>]+', r.text)
+                    if not m:
+                        m = re.search(r'https://pbs\.twimg\.com/[^"\s>]+', r.text)
+                    if not m:
+                        m = re.search(r'property="og:image"\s+content="(https://pbs\.twimg\.com/[^"\s>]+)"', r.text)
+                    if m:
+                        return m.group(1)
+            except Exception:
+                pass
+            # Fall back to original short URL if parsing fails
+            return image_url
+        
+        # For other URLs, return as is
+        return image_url
+    except Exception:
+        # If processing fails, return the original URL
+        return image_url
 
 def extract_image_urls_from_text(text, base_url):
     """Extract image URLs from text content"""
@@ -431,26 +548,354 @@ def extract_og_images(soup, parsed_url):
     
     return image_urls
 
-def process_image_url(image_url):
-    """Process image URLs to handle redirects and protected URLs"""
+def fact_check_text(text):
+    """Simple fact-check function"""
+    if not PERPLEXITY_API_KEY:
+        return {"error": "API key not configured"}, 500
+    
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    prompt = f"""
+    You are a fact-checking assistant. Analyze the following text and fact-check any factual claims.
+    
+    TEXT TO ANALYZE: {text}
+    
+    TASK: If you find factual claims, provide a fact-check analysis. If no factual claims are found, indicate this.
+    
+    RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
+    {{
+        "verdict": "TRUE",
+        "confidence": 95,
+        "explanation": "Your explanation here in plain text, not JSON format",
+        "sources": ["https://example.com/source1", "https://example.com/source2"]
+    }}
+    
+    VERDICT OPTIONS: TRUE, FALSE, PARTIALLY TRUE, INSUFFICIENT EVIDENCE, NO FACTUAL CLAIMS
+    CONFIDENCE: 0-100 (integer)
+    EXPLANATION: Plain text explanation, not JSON
+    SOURCES: Array of URLs as strings
+    
+    CRITICAL REQUIREMENTS: 
+    - Return ONLY the JSON object
+    - Do not include any text before or after
+    - Do not format the explanation as JSON
+    - Use plain text for the explanation field
+    - Do not prefix with "json" or any other text
+    - The response must be parseable by JSON.parse()
+    """
+    
     try:
-        # For Twitter pic.twitter.com URLs, try to get the actual image
-        if 'pic.twitter.com' in image_url:
-            # Try to follow the redirect to get the actual image URL
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
-            response = requests.head(image_url, headers=headers, allow_redirects=True, timeout=10)
-            if response.status_code == 200:
-                # If we get a successful response, use the original URL
-                # Perplexity might be able to handle it
-                return image_url
+        response = requests.post(
+            PERPLEXITY_URL,
+            headers=headers,
+            json={
+                "model": "sonar-pro",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 500
+            },
+            timeout=30
+        )
         
-        # For other URLs, return as is
-        return image_url
-    except Exception:
-        # If processing fails, return the original URL
-        return image_url
+        if response.status_code == 200:
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+
+            
+            # Try to parse as JSON, fallback to simple response
+            try:
+                # First, try to clean the content if it has "json" prefix
+                clean_content = content.strip()
+                if clean_content.startswith('json '):
+                    clean_content = clean_content[5:].strip()
+                
+                parsed = json.loads(clean_content)
+                # Format for frontend: create fact_check_results array
+                fact_check_result = {
+                    "claim": text[:200] + "..." if len(text) > 200 else text,
+                    "result": parsed,
+                    "status": "ANALYSIS COMPLETE"
+                }
+                return {
+                    "fact_check_results": [fact_check_result],
+                    "original_text": text,
+                    "claims_found": 1,
+                    "timestamp": time.time()
+                }, 200
+            except:
+                # If the content looks like JSON but failed to parse, try to extract useful parts
+                if '"verdict"' in content and '"explanation"' in content:
+                    # Try to extract key parts using regex
+                    verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
+                    confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
+                    explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
+                    sources_match = re.search(r'"sources":\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+                    
+                    verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
+                    confidence = int(confidence_match.group(1)) if confidence_match else 75
+                    explanation = explanation_match.group(1) if explanation_match else content
+                    sources = ["Perplexity Analysis"]
+                    
+
+                    
+                    if sources_match:
+                        # Try to extract URLs from sources
+                        sources_text = sources_match.group(1)
+                        # Look for URLs in the sources text, handling quoted strings
+                        url_matches = re.findall(r'https?://[^"\s,]+', sources_text)
+                        if url_matches:
+                            sources = url_matches
+                        else:
+                            # Fallback: try to extract from the full content
+                            all_urls = re.findall(r'https?://[^"\s,]+', content)
+                            if all_urls:
+                                sources = all_urls[:5]  # Limit to first 5 URLs
+                    
+                    fact_check_result = {
+                        "claim": text[:200] + "..." if len(text) > 200 else text,
+                        "result": {
+                            "verdict": verdict,
+                            "confidence": confidence,
+                            "explanation": explanation,
+                            "sources": sources
+                        },
+                        "status": "ANALYSIS COMPLETE"
+                    }
+                else:
+                    # Fallback response
+                    fact_check_result = {
+                        "claim": text[:200] + "..." if len(text) > 200 else text,
+                        "result": {
+                            "verdict": "INSUFFICIENT EVIDENCE",
+                            "confidence": 75,
+                            "explanation": content,
+                            "sources": ["Perplexity Analysis"]
+                        },
+                        "status": "ANALYSIS COMPLETE"
+                    }
+                
+                return {
+                    "fact_check_results": [fact_check_result],
+                    "original_text": text,
+                    "claims_found": 1,
+                    "timestamp": time.time()
+                }, 200
+        else:
+            return {"error": f"API request failed: {response.status_code}"}, 500
+            
+    except Exception as e:
+        return {"error": f"Request failed: {str(e)}"}, 500
+
+def fact_check_image(image_data_url, image_url):
+    """Fact-check claims from an image using Perplexity's multimodal capabilities"""
+    if not PERPLEXITY_API_KEY:
+        return {"error": "API key not configured"}, 500
+    
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # Build Perplexity multimodal prompt for direct fact-checking
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (
+                        "You are a visual fact-checking expert. Analyze this image comprehensively using your visual understanding capabilities. "
+                        "Look at the image as a whole - examine charts, graphs, text, images, symbols, and visual elements. "
+                        "Identify any factual claims, statistics, data, or statements that can be verified. "
+                        "For charts/graphs: Analyze the data, labels, sources, and methodology. "
+                        "For text: Read and verify any claims, quotes, or statements. "
+                        "For images: Identify any factual content, dates, names, or verifiable information. "
+                        "If the image contains factual claims, provide a thorough fact-check analysis. "
+                        "If the image is purely visual (art, abstract, decorative) with no factual content, indicate this. "
+                        "Return ONLY a valid JSON object with this exact structure: "
+                        "{"
+                        '"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",'
+                        '"confidence": 0-100,'
+                        '"explanation": "Your detailed visual analysis here",'
+                        '"sources": ["url1", "url2"]'
+                        "}"
+                        "CRITICAL: Return ONLY the JSON object, no other text. Use your visual understanding to analyze the image content, not just extract text."
+                    )}
+                ]
+            }
+        ]
+        
+        # Handle different types of image URLs
+        if image_data_url:
+            messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
+        elif image_url:
+            # Try to handle redirect URLs and protected URLs
+            processed_url = process_image_url(image_url)
+            messages[0]["content"].append({"type": "image_url", "image_url": processed_url})
+
+        payload = {
+            "model": "sonar-pro",  # supports vision per Perplexity docs
+            "messages": messages,
+            "max_tokens": 800,
+        }
+
+        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
+        if sonar_resp.status_code != 200:
+            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
+
+        content = sonar_resp.json()['choices'][0]['message']['content']
+        
+        # Try to parse the response as JSON
+        try:
+            # Clean the content if it has "json" prefix
+            clean_content = content.strip()
+            if clean_content.startswith('json '):
+                clean_content = clean_content[5:].strip()
+            
+            parsed = json.loads(clean_content)
+            
+            # Create the result structure
+            result = {
+                "fact_check_results": [{
+                    "claim": "Image Analysis",
+                    "result": {
+                        "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
+                        "confidence": parsed.get("confidence", 75),
+                        "explanation": parsed.get("explanation", "Analysis completed"),
+                        "sources": parsed.get("sources", [])
+                    }
+                }],
+                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
+                "timestamp": time.time(),
+                "source_url": image_url if image_url else None
+            }
+            
+            return result, 200
+            
+        except json.JSONDecodeError:
+            # If JSON parsing fails, try to extract useful information
+            if "no factual claims" in content.lower() or "no claims" in content.lower():
+                return {
+                    "fact_check_results": [{
+                        "claim": "Image Analysis",
+                        "result": {
+                            "verdict": "NO FACTUAL CLAIMS",
+                            "confidence": 100,
+                            "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
+                            "sources": []
+                        }
+                    }],
+                    "claims_found": 0,
+                    "timestamp": time.time(),
+                    "source_url": image_url if image_url else None
+                }, 200
+            else:
+                # Try to extract verdict and explanation from the text
+                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
+                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
+                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
+                
+                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
+                confidence = int(confidence_match.group(1)) if confidence_match else 75
+                explanation = explanation_match.group(1) if explanation_match else content
+                
+                return {
+                    "fact_check_results": [{
+                        "claim": "Image Analysis",
+                        "result": {
+                            "verdict": verdict,
+                            "confidence": confidence,
+                            "explanation": explanation,
+                            "sources": []
+                        }
+                    }],
+                    "claims_found": 1,
+                    "timestamp": time.time(),
+                    "source_url": image_url if image_url else None
+                }, 200
+
+    except Exception as e:
+        return {"error": f"Image analysis failed: {str(e)}"}, 500
+
+def fact_check_url_with_images(url):
+    """Fact-check both text and images from a URL"""
+    try:
+        # Extract both text and images from URL
+        content = extract_content_from_url(url)
+        text = content["text"]
+        image_urls = content["image_urls"]
+        
+        results = []
+        
+        # First, fact-check the text content
+        if text and len(text.strip()) > 5:  # Reduced minimum length for tweets
+            text_result = fact_check_text(text)
+            if isinstance(text_result, tuple):
+                text_data, text_status = text_result
+                if text_status == 200 and isinstance(text_data, dict) and 'fact_check_results' in text_data:
+                    results.extend(text_data['fact_check_results'])
+        
+        # Then, fact-check each image
+        for i, image_url in enumerate(image_urls[:3]):  # Limit to first 3 images
+            try:
+                image_result = fact_check_image("", image_url)
+                if isinstance(image_result, tuple):
+                    image_data, image_status = image_result
+                    if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
+                        # Update claim to indicate it's from an image
+                        for result in image_data['fact_check_results']:
+                            result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
+                        results.extend(image_data['fact_check_results'])
+                    else:
+                        # Image analysis failed, add a note about the detected image
+                        platform_name = get_platform_name(image_url)
+                        results.append({
+                            "claim": f"Image {i+1} detected in {platform_name}",
+                            "result": {
+                                "verdict": "IMAGE DETECTED",
+                                "confidence": 100,
+                                "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
+                                "sources": []
+                            },
+                            "status": "ANALYSIS COMPLETE"
+                        })
+            except Exception as e:
+                # If image analysis fails, add a note about the detected image
+                platform_name = get_platform_name(image_url)
+                results.append({
+                    "claim": f"Image {i+1} detected in {platform_name}",
+                    "result": {
+                        "verdict": "IMAGE DETECTED",
+                        "confidence": 100,
+                        "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
+                        "sources": []
+                    },
+                    "status": "ANALYSIS COMPLETE"
+                })
+        
+        if not results:
+            # If no results from text or images, create a default response
+            results = [{
+                "claim": "URL Content Analysis",
+                "result": {
+                    "verdict": "NO FACTUAL CLAIMS",
+                    "confidence": 100,
+                    "explanation": "The URL content does not contain any factual claims that can be verified.",
+                    "sources": []
+                }
+            }]
+        
+        return {
+            "fact_check_results": results,
+            "claims_found": len(results),
+            "timestamp": time.time(),
+            "source_url": url,
+            "images_analyzed": len(image_urls)
+        }, 200
+        
+    except Exception as e:
+        return {"error": f"URL analysis failed: {str(e)}"}, 500
 
 def get_platform_name(url):
     """Get the platform name from a URL"""
