@@ -417,9 +417,9 @@ def extract_content_from_url(url):
     except Exception as e:
         raise ValueError(f"Error extracting content: {str(e)}")
 
-def extract_platform_specific_images(url, parsed_url, headers, text):
-    """Extract images using platform-specific methods"""
-    image_urls = []
+def extract_platform_specific_images(url, parsed_url, headers, text_content):
+    """Extract images from known platforms using platform-specific logic"""
+    images = []
     
     # Twitter/X
     if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
@@ -427,51 +427,29 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
             m = re.search(r"/status/(\d+)", parsed_url.path)
             if m:
                 tweet_id = m.group(1)
-                
-                # Twitter oEmbed API
-                oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
-                oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
-                if oembed_response.status_code == 200:
-                    oembed_data = oembed_response.json()
-                    if oembed_data.get("html"):
-                        oembed_html = oembed_data["html"]
-                        # Extract pic.twitter.com short links first
-                        pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', oembed_html)
-                        for pic_url in pic_urls:
-                            full_pic_url = f"https://{pic_url}"
-                            image_urls.append(full_pic_url)
-                        # Also try to extract direct pbs.twimg.com media links
-                        pbs_urls = re.findall(r'https://pbs\.twimg\.com/media/[^"\s>]+', oembed_html)
-                        image_urls.extend(pbs_urls)
-                
-                # Twitter syndication endpoint often includes direct media
-                try:
-                    tw = requests.get(
-                        "https://cdn.syndication.twimg.com/widgets/tweet",
-                        params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
-                    )
-                    if tw.status_code == 200:
-                        data = tw.json()
-                        photos = data.get("photos") or []
-                        for p in photos:
-                            media_url = p.get("url") or p.get("media_url_https") or p.get("media_url")
-                            if media_url:
-                                image_urls.append(media_url)
-                        # Some cards include image under "card" -> binding_values
-                        try:
-                            card = data.get("card") or {}
-                            bindings = card.get("binding_values") or {}
-                            for v in bindings.values():
-                                if isinstance(v, dict) and v.get("type") == "IMAGE" and isinstance(v.get("image_value"), dict):
-                                    u = v["image_value"].get("url")
-                                    if u:
-                                        image_urls.append(u)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                cdn_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}"
+                tr = requests.get(cdn_url, headers={"User-Agent": headers.get("User-Agent", "Mozilla/5.0")}, timeout=12)
+                if tr.status_code == 200 and tr.text:
+                    try:
+                        tj = json.loads(tr.text)
+                        # Photos
+                        for ph in (tj.get("photos") or []):
+                            u = ph.get("url") or ph.get("image_url")
+                            if u:
+                                images.append(u)
+                        # Video poster or variants (fallback to poster)
+                        v = tj.get("video") or {}
+                        if isinstance(v, dict):
+                            poster = v.get("poster")
+                            if poster:
+                                images.append(poster)
+                    except Exception:
+                        pass
         except Exception:
             pass
+        # 2) As a fallback, capture pic.twitter.com shortlinks in the text
+        pic_urls = re.findall(r"https?://pic\.twitter\.com/\S+", text_content or "")
+        images.extend(pic_urls)
     
     # Reddit
     elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
@@ -536,18 +514,18 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
                 # Direct URL field
                 cand = post.get("url_overridden_by_dest") or post.get("url")
                 if isinstance(cand, str) and re.search(r'\.(jpg|jpeg|png|gif|webp)(?:\?|$)', cand, re.I):
-                    image_urls.append(cand)
+                    images.append(cand)
                 
                 # Preview images
                 preview = post.get("preview") or {}
                 for img in (preview.get("images") or []):
                     src = (img.get("source") or {}).get("url") or ""
                     if src:
-                        image_urls.append(src.replace('&amp;', '&'))
+                        images.append(src.replace('&amp;', '&'))
                     for res in (img.get("resolutions") or []):
                         u = res.get("url")
                         if u:
-                            image_urls.append(u.replace('&amp;', '&'))
+                            images.append(u.replace('&amp;', '&'))
                 
                 # Gallery images
                 media_meta = post.get("media_metadata") or {}
@@ -559,41 +537,41 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
                             if isinstance(m, dict):
                                 s = (m.get("s") or {}).get("u") or ""
                                 if s:
-                                    image_urls.append(s.replace('&amp;', '&'))
+                                    images.append(s.replace('&amp;', '&'))
                                 for p in (m.get("p") or []):
                                     u = p.get("u")
                                     if u:
-                                        image_urls.append(u.replace('&amp;', '&'))
+                                        images.append(u.replace('&amp;', '&'))
                     else:
                         for m in media_meta.values():
                             if isinstance(m, dict):
                                 s = (m.get("s") or {}).get("u") or ""
                                 if s:
-                                    image_urls.append(s.replace('&amp;', '&'))
+                                    images.append(s.replace('&amp;', '&'))
                 
                 # Secure media thumbnails
                 sm = post.get("secure_media") or {}
                 thumb = (sm.get("oembed") or {}).get("thumbnail_url")
                 if thumb:
-                    image_urls.append(thumb)
+                    images.append(thumb)
             
             # If still nothing and we can read OG from Jina HTML
-            if not image_urls:
+            if not images:
                 try:
                     wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
                     jr = requests.get(wrapped, headers=headers, timeout=15)
                     if jr.status_code == 200 and jr.text:
                         jr_soup = BeautifulSoup(jr.text, 'lxml')
                         ogs = extract_og_images(jr_soup, parsed_url)
-                        image_urls.extend(ogs)
+                        images.extend(ogs)
                 except Exception:
                     pass
 
             # Fallback: regex for i.redd.it and imgur links in text
-            reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif|webp)', text)
-            image_urls.extend(reddit_images)
-            imgur_images = re.findall(r'https://i?\.imgur\.com/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif|webp)', text)
-            image_urls.extend(imgur_images)
+            reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif)', text_content)
+            images.extend(reddit_images)
+            imgur_images = re.findall(r'https://i?\.imgur\.com/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif)', text_content)
+            images.extend(imgur_images)
         except Exception:
             pass
     
@@ -601,8 +579,8 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
     elif parsed_url.netloc in {"instagram.com", "www.instagram.com"}:
         try:
             # Instagram often has direct image URLs
-            instagram_images = re.findall(r'https://scontent-[a-z0-9-]+\.cdninstagram\.com/[^"\s]+', text)
-            image_urls.extend(instagram_images)
+            instagram_images = re.findall(r'https://scontent-[a-z0-9-]+\.cdninstagram\.com/[^"\s]+', text_content)
+            images.extend(instagram_images)
         except Exception:
             pass
     
@@ -610,13 +588,12 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
     elif parsed_url.netloc in {"facebook.com", "www.facebook.com", "fb.com", "www.fb.com"}:
         try:
             # Facebook often has direct image URLs
-            facebook_images = re.findall(r'https://scontent-[a-z0-9-]+\.fbcdn\.net/[^"\s]+', text)
-            image_urls.extend(facebook_images)
+            facebook_images = re.findall(r'https://scontent-[a-z0-9-]+\.fbcdn\.net/[^"\s]+', text_content)
+            images.extend(facebook_images)
         except Exception:
             pass
     
-    return image_urls
-
+    return images
 
 def process_image_url(image_url):
     """Process image URLs to handle redirects and protected URLs"""
@@ -1025,6 +1002,7 @@ def fact_check_url_with_images(url):
                         image_data['images_detected'] = len(image_urls)
                         image_data['selected_image_url'] = primary_image_url
                         image_data['source_url'] = url
+                        image_data['debug_image_urls'] = image_urls[:10]
                         return image_data, 200
             except Exception as e:
                 # If multimodal analysis fails, fall back to text-only analysis
@@ -1042,6 +1020,7 @@ def fact_check_url_with_images(url):
                             result['claim'] = f"Text Analysis (with {len(image_urls)} image(s) detected): {result.get('claim', 'Content Analysis')}"
                     text_data['images_detected'] = len(image_urls)
                     text_data['source_url'] = url
+                    text_data['debug_image_urls'] = image_urls[:10]
                     return text_data, 200
         
         # If no results, create a default response
@@ -1057,10 +1036,11 @@ def fact_check_url_with_images(url):
         
         return {
             "fact_check_results": results,
+            "original_text": text,
             "claims_found": len(results),
-            "timestamp": time.time(),
             "source_url": url,
-            "images_detected": len(image_urls)
+            "images_detected": len(image_urls),
+            "debug_image_urls": image_urls[:10]
         }, 200
         
     except Exception as e:
