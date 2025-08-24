@@ -21,48 +21,138 @@ def extract_text_from_url(url):
         "Accept-Encoding": "gzip, deflate",
         "DNT": "1",
         "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Cache-Control": "max-age=0"
     }
     
     try:
         parsed_url = urlparse(url)
         
-        # Special handling for Reddit - try JSON API first
+        # Special handling for Reddit - multiple strategies
         if parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
+            # Strategy 1: Try Reddit JSON API with different user agents
             try:
                 # Convert to JSON URL
                 json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
-                rj_headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                    "Accept": "application/json"
-                }
-                rj = requests.get(json_url, headers=rj_headers, timeout=15)
-                if rj.status_code == 200:
-                    data = rj.json()
-                    # Standard post JSON: [post, comments]
+                
+                # Try multiple user agents to avoid blocking
+                user_agents = [
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0"
+                ]
+                
+                for user_agent in user_agents:
                     try:
-                        post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
-                        title = post.get("title", "")
-                        selftext = post.get("selftext", "") or post.get("body", "")
-                        text = f"{title}. {selftext}".strip()
+                        rj_headers = {
+                            "User-Agent": user_agent,
+                            "Accept": "application/json, text/plain, */*",
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "Accept-Encoding": "gzip, deflate, br",
+                            "DNT": "1",
+                            "Connection": "keep-alive",
+                            "Sec-Fetch-Dest": "empty",
+                            "Sec-Fetch-Mode": "cors",
+                            "Sec-Fetch-Site": "same-origin"
+                        }
+                        
+                        rj = requests.get(json_url, headers=rj_headers, timeout=15)
+                        if rj.status_code == 200:
+                            data = rj.json()
+                            
+                            # Handle different Reddit JSON structures
+                            try:
+                                # Standard post JSON: [post, comments]
+                                if isinstance(data, list) and len(data) > 0:
+                                    post = data[0]["data"]["children"][0]["data"]
+                                else:
+                                    post = data["data"]["children"][0]["data"]
+                                
+                                title = post.get("title", "")
+                                selftext = post.get("selftext", "") or post.get("body", "")
+                                text = f"{title}. {selftext}".strip()
+                                
+                                if len(text) > 30:
+                                    return text
+                                    
+                            except Exception as e:
+                                # Try alternative JSON structure
+                                if isinstance(data, dict):
+                                    if "data" in data and "children" in data["data"]:
+                                        children = data["data"]["children"]
+                                        if children and isinstance(children[0], dict) and "data" in children[0]:
+                                            post_data = children[0]["data"]
+                                            title = post_data.get("title", "")
+                                            selftext = post_data.get("selftext", "") or post_data.get("body", "")
+                                            text = f"{title}. {selftext}".strip()
+                                            if len(text) > 30:
+                                                return text
+                                
+                    except Exception:
+                        continue
+                        
+            except Exception as e:
+                pass
+            
+            # Strategy 2: Try old.reddit.com version
+            try:
+                old_reddit_url = url.replace("www.reddit.com", "old.reddit.com").replace("reddit.com", "old.reddit.com")
+                old_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.5",
+                    "Accept-Encoding": "gzip, deflate",
+                    "DNT": "1",
+                    "Connection": "keep-alive",
+                    "Upgrade-Insecure-Requests": "1"
+                }
+                
+                response = requests.get(old_reddit_url, headers=old_headers, timeout=20)
+                if response.status_code == 200:
+                    html = response.text
+                    soup = BeautifulSoup(html, "lxml")
+                    
+                    # Look for Reddit post content
+                    post_content = soup.find("div", class_="usertext-body")
+                    if post_content:
+                        text = post_content.get_text(separator=" ", strip=True)
                         if len(text) > 30:
                             return text
-                    except Exception as e:
-                        # If JSON parsing fails, try to extract from the raw JSON
-                        if isinstance(data, dict) and "data" in data:
-                            try:
-                                children = data["data"].get("children", [])
-                                if children and isinstance(children[0], dict) and "data" in children[0]:
-                                    post_data = children[0]["data"]
-                                    title = post_data.get("title", "")
-                                    selftext = post_data.get("selftext", "") or post_data.get("body", "")
-                                    text = f"{title}. {selftext}".strip()
-                                    if len(text) > 30:
-                                        return text
-                            except Exception:
-                                pass
+                    
+                    # Look for title
+                    title_elem = soup.find("h1", class_="title")
+                    if title_elem:
+                        title = title_elem.get_text(strip=True)
+                        if len(title) > 10:
+                            return title
+                            
             except Exception as e:
-                # JSON approach failed, continue to HTML approach
+                pass
+            
+            # Strategy 3: Try Reddit's oEmbed endpoint
+            try:
+                # Extract post ID from URL
+                post_match = re.search(r'/comments/([a-zA-Z0-9]+)', url)
+                if post_match:
+                    post_id = post_match.group(1)
+                    oembed_url = f"https://www.reddit.com/oembed?url=https://www.reddit.com/comments/{post_id}/"
+                    
+                    oembed_headers = {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept": "application/json"
+                    }
+                    
+                    oembed_response = requests.get(oembed_url, headers=oembed_headers, timeout=15)
+                    if oembed_response.status_code == 200:
+                        oembed_data = oembed_response.json()
+                        if oembed_data.get("title"):
+                            return oembed_data["title"]
+                            
+            except Exception as e:
                 pass
         
         # Special handling for Twitter/X using syndication endpoint
@@ -105,7 +195,7 @@ def extract_text_from_url(url):
                 except Exception:
                     pass
         
-        # Try direct HTML request
+        # Try direct HTML request with enhanced headers
         try:
             response = requests.get(url, headers=headers, timeout=20)
             if response.status_code == 200:
@@ -149,6 +239,34 @@ def extract_text_from_url(url):
                 return re.sub(r'\s+', ' ', jr.text).strip()
         except Exception as e:
             pass
+        
+        # Ultimate fallback: Try multiple proxy services
+        proxy_services = [
+            f"https://r.jina.ai/{url}",
+            f"https://api.allorigins.win/raw?url={url}",
+            f"https://cors-anywhere.herokuapp.com/{url}",
+            f"https://thingproxy.freeboard.io/fetch/{url}"
+        ]
+        
+        for proxy_url in proxy_services:
+            try:
+                proxy_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                }
+                
+                proxy_response = requests.get(proxy_url, headers=proxy_headers, timeout=20)
+                if proxy_response.status_code == 200 and len(proxy_response.text.strip()) > 100:
+                    # Clean the proxied content
+                    soup = BeautifulSoup(proxy_response.text, "lxml")
+                    text = soup.get_text(separator=" ", strip=True)
+                    text = re.sub(r'\s+', ' ', text).strip()
+                    
+                    if len(text) > 50:
+                        return text
+                        
+            except Exception as e:
+                continue
         
         # If all methods fail, raise an error
         raise ValueError(f"Failed to extract content from URL after trying multiple methods")
