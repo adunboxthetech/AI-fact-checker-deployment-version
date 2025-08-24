@@ -12,14 +12,21 @@ from readability import Document
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
-DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
+# Anti-blocking headers
+STEALTH_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
     "DNT": "1",
     "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1"
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
 }
 
 def _build_reddit_json_url(url):
@@ -56,7 +63,8 @@ def _is_image_like(url):
         "pbs.twimg.com", "pic.twitter.com", "i.redd.it", "i.imgur.com", 
         "imgur.com", "i.ytimg.com", "media.githubusercontent.com", 
         "cdn.discordapp.com", "images.unsplash.com", "i.pinimg.com", 
-        "scontent", "fbcdn.net", "cdninstagram.com", "graph.facebook.com"
+        "scontent", "fbcdn.net", "cdninstagram.com", "graph.facebook.com",
+        "preview.redd.it"
     ]
     
     # Check for image hosts
@@ -81,107 +89,53 @@ def _is_image_like(url):
     return False
 
 def extract_content_from_url(url):
-    """DEBUG VERSION: Extract both text and images with detailed logging"""
+    """ANTI-BLOCKING VERSION: Handle 403 errors and use multiple strategies"""
     parsed_url = urlparse(url)
     netloc = parsed_url.netloc
     text_content = ""
     image_urls = []
     
-    print(f"\n🔍 DEBUG: Starting extraction from: {url}")
-    print(f"🔍 DEBUG: Parsed netloc: {netloc}")
+    print(f"🔍 EXTRACTING: {url}")
     
     try:
-        # Enhanced Twitter/X handler with DEBUG
+        # Twitter/X handler
         if 'twitter.com' in netloc or 'x.com' in netloc:
             match = re.search(r'/status/(\d+)', parsed_url.path)
             if match:
                 tweet_id = match.group(1)
-                print(f"🔍 DEBUG: Tweet ID extracted: {tweet_id}")
+                print(f"📱 Twitter ID: {tweet_id}")
                 
                 # Method 1: Twitter syndication API
                 try:
                     api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
-                    print(f"🔍 DEBUG: Calling Twitter API: {api_url}")
-                    
-                    r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=15)
-                    print(f"🔍 DEBUG: Twitter API status: {r.status_code}")
-                    
+                    r = requests.get(api_url, headers=STEALTH_HEADERS, timeout=15)
                     if r.status_code == 200:
                         data = r.json()
-                        print(f"🔍 DEBUG: Twitter API response keys: {list(data.keys())}")
+                        text_content = data.get('text', '').strip()
                         
-                        # Debug: Show raw response
-                        print(f"🔍 DEBUG: Raw Twitter  {json.dumps(data, indent=2)[:1000]}...")
-                        
-                        tweet_text = data.get('text', '').strip()
-                        print(f"🔍 DEBUG: Raw tweet text: '{tweet_text}'")
-                        
-                        # Check for photos in response
-                        photos = data.get('photos', [])
-                        print(f"🔍 DEBUG: Photos array length: {len(photos)}")
-                        print(f"🔍 DEBUG: Photos  {photos}")
-                        
-                        if photos:
-                            for i, photo in enumerate(photos):
-                                img_url = photo.get('url')
-                                print(f"🔍 DEBUG: Photo {i+1} URL: {img_url}")
-                                if img_url:
-                                    image_urls.append(img_url)
-                                    print(f"✅ DEBUG: Added image URL: {img_url}")
-                        else:
-                            print("❌ DEBUG: No photos found in Twitter API response")
-                        
-                        # Check for video
-                        if data.get('video'):
-                            print(f"🔍 DEBUG: Video data found: {data.get('video')}")
-                            if data['video'].get('poster'):
-                                image_urls.append(data['video']['poster'])
-                                print(f"✅ DEBUG: Added video poster: {data['video']['poster']}")
-                        
-                        # Filter text content
-                        if tweet_text and not re.match(r'^[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\s@\w\./:-]*$', tweet_text):
-                            text_content = tweet_text
-                            print(f"✅ DEBUG: Text content accepted: {text_content[:100]}...")
-                        else:
-                            print(f"❌ DEBUG: Text content rejected (metadata only): {tweet_text}")
-                        
-                        print(f"🔍 DEBUG: Twitter API final - Images: {len(image_urls)}, Text length: {len(text_content)}")
-                        
+                        # Extract images
+                        for photo in data.get('photos', []):
+                            if photo.get('url'):
+                                image_urls.append(photo['url'])
+                                print(f"✅ Found Twitter image: {photo['url']}")
+                                
+                        if data.get('video', {}).get('poster'):
+                            image_urls.append(data['video']['poster'])
+                            
+                        print(f"📱 Twitter API: {len(image_urls)} images, text: {len(text_content)} chars")
                 except Exception as e:
-                    print(f"❌ DEBUG: Twitter API failed: {e}")
+                    print(f"❌ Twitter API failed: {e}")
                 
-                # Method 2: oEmbed fallback - ONLY if no images found
+                # Method 2: oEmbed fallback
                 if not image_urls:
-                    print(f"🔍 DEBUG: No images from API, trying oEmbed...")
                     try:
                         oembed_url = f"https://publish.twitter.com/oembed?url={url}"
-                        print(f"🔍 DEBUG: oEmbed URL: {oembed_url}")
-                        
-                        r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=15)
-                        print(f"🔍 DEBUG: oEmbed status: {r.status_code}")
-                        
+                        r = requests.get(oembed_url, headers=STEALTH_HEADERS, timeout=15)
                         if r.status_code == 200:
                             oembed_data = r.json()
-                            print(f"🔍 DEBUG: oEmbed keys: {list(oembed_data.keys())}")
-                            
                             html_content = oembed_data.get('html', '')
-                            print(f"🔍 DEBUG: oEmbed HTML length: {len(html_content)}")
-                            
                             if html_content:
                                 soup = BeautifulSoup(html_content, 'lxml')
-                                
-                                # Look for images in oEmbed HTML
-                                imgs = soup.find_all('img')
-                                print(f"🔍 DEBUG: Found {len(imgs)} img tags in oEmbed")
-                                
-                                for i, img in enumerate(imgs):
-                                    src = img.get('src')
-                                    print(f"🔍 DEBUG: Image {i+1} src: {src}")
-                                    if src and _is_image_like(src):
-                                        image_urls.append(src)
-                                        print(f"✅ DEBUG: Added oEmbed image: {src}")
-                                    else:
-                                        print(f"❌ DEBUG: Image rejected by _is_image_like: {src}")
                                 
                                 # Extract text if not already found
                                 if not text_content:
@@ -192,127 +146,137 @@ def extract_content_from_url(url):
                                         text_content = blockquote.get_text(strip=True)
                                         text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
                                         text_content = text_content.strip()
-                                        print(f"✅ DEBUG: oEmbed text extracted: {text_content[:100]}...")
                                 
-                                print(f"🔍 DEBUG: oEmbed final - Images: {len(image_urls)}, Text: {len(text_content)}")
-                                
+                                # Extract images
+                                for img in soup.find_all('img'):
+                                    src = img.get('src')
+                                    if src and _is_image_like(src):
+                                        image_urls.append(src)
+                                        print(f"✅ Found oEmbed image: {src}")
+                                        
+                                print(f"📱 oEmbed: {len(image_urls)} images found")
                     except Exception as e:
-                        print(f"❌ DEBUG: oEmbed failed: {e}")
+                        print(f"❌ oEmbed failed: {e}")
                 
-                # Method 3: Force add some test images if still none found (for debugging)
+                # If no images found, create a placeholder for AI analysis
                 if not image_urls:
-                    print(f"🔍 DEBUG: Still no images found, checking if this is a media tweet...")
-                    # Look for pic.twitter.com links in the URL or elsewhere
-                    if 'pic.twitter.com' in url or '/photo/' in url:
-                        print(f"🔍 DEBUG: This appears to be a media tweet but no images extracted")
-                    
-                    # For debugging, let's try a different approach
+                    print(f"⚠️ No images from Twitter API - will use AI fallback")
+                    image_urls = [f"AI_ANALYZE:{url}"]
+        
+        # Reddit handler with multiple strategies
+        elif 'reddit.com' in netloc or 'redd.it' in netloc:
+            try:
+                # Multiple strategies for Reddit
+                strategies = [
+                    lambda u: u + '.json?raw_json=1',  # Direct JSON
+                    lambda u: u.replace('www.reddit.com', 'old.reddit.com') + '.json',  # Old Reddit
+                    lambda u: u  # Direct HTML scraping
+                ]
+                
+                for i, strategy in enumerate(strategies):
                     try:
-                        # Try direct scraping with more aggressive headers
-                        scrape_headers = {
-                            **DEFAULT_HEADERS,
-                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-                            "Sec-Fetch-Dest": "document",
-                            "Sec-Fetch-Mode": "navigate",
-                            "Sec-Fetch-Site": "none",
-                            "Sec-Fetch-User": "?1",
-                            "Upgrade-Insecure-Requests": "1",
-                            "Cache-Control": "no-cache",
-                            "Pragma": "no-cache"
-                        }
+                        target_url = strategy(url)
+                        print(f"🔄 Reddit strategy {i+1}: {target_url}")
                         
-                        print(f"🔍 DEBUG: Trying direct scraping...")
-                        r = requests.get(url, headers=scrape_headers, timeout=15)
-                        print(f"🔍 DEBUG: Direct scraping status: {r.status_code}")
+                        r = requests.get(target_url, headers=STEALTH_HEADERS, timeout=15)
+                        print(f"📊 Reddit response: {r.status_code}")
                         
                         if r.status_code == 200:
-                            # Look for meta tags
-                            soup = BeautifulSoup(r.text, 'lxml')
-                            
-                            # Twitter card images
-                            meta_props = ['twitter:image', 'twitter:image:src', 'og:image', 'og:image:url']
-                            for prop in meta_props:
-                                meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop}) or soup.find('meta', attrs={'property': prop})
-                                if meta:
-                                    content = meta.get('content')
-                                    print(f"🔍 DEBUG: Found meta {prop}: {content}")
-                                    if content and _is_image_like(content):
-                                        image_urls.append(content)
-                                        print(f"✅ DEBUG: Added meta image: {content}")
-                            
-                            print(f"🔍 DEBUG: After meta scraping - Images: {len(image_urls)}")
-                            
+                            if target_url.endswith('.json'):
+                                # JSON response
+                                data = r.json()
+                                post_data = data[0]['data']['children'][0]['data']
+                                text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
+                                
+                                # Extract images
+                                if post_data.get('url_overridden_by_dest'):
+                                    img_url = post_data['url_overridden_by_dest']
+                                    if _is_image_like(img_url):
+                                        image_urls.append(img_url)
+                                
+                                # Reddit preview images
+                                for img_data in post_data.get('preview', {}).get('images', []):
+                                    img_src = img_data['source']['url'].replace('&amp;', '&')
+                                    if _is_image_like(img_src):
+                                        image_urls.append(img_src)
+                                
+                                # Media metadata
+                                for media_id, media in post_data.get('media_metadata', {}).items():
+                                    if media.get('e') == 'Image' and media.get('s', {}).get('u'):
+                                        img_url = media['s']['u'].replace('&amp;', '&')
+                                        if _is_image_like(img_url):
+                                            image_urls.append(img_url)
+                                
+                                print(f"✅ Reddit JSON: {len(image_urls)} images found")
+                                break
+                            else:
+                                # HTML scraping fallback
+                                soup = BeautifulSoup(r.text, 'lxml')
+                                # Extract title and text
+                                title_elem = soup.find('h1') or soup.find('title')
+                                if title_elem:
+                                    text_content = title_elem.get_text(strip=True)
+                                
+                                # Look for images in HTML
+                                for img in soup.find_all('img'):
+                                    src = img.get('src')
+                                    if src and _is_image_like(src):
+                                        image_urls.append(src)
+                                
+                                print(f"✅ Reddit HTML: {len(image_urls)} images found")
+                                break
+                                
                     except Exception as e:
-                        print(f"❌ DEBUG: Direct scraping failed: {e}")
-            else:
-                print(f"❌ DEBUG: No tweet ID found in URL")
-        
-        else:
-            print(f"🔍 DEBUG: Not a Twitter URL, using generic handler")
-            # Generic handler for other URLs...
-            try:
-                r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15, allow_redirects=True)
-                r.raise_for_status()
-                html = r.text
+                        print(f"❌ Reddit strategy {i+1} failed: {e}")
+                        continue
                 
-                doc = Document(html)
-                text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
-                if len(text_content) < 150:
-                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
-                
-                soup = BeautifulSoup(html, 'lxml')
-                for prop in ['og:image', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']:
-                    meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
-                    if meta and meta.get('content'):
-                        img_url = _resolve_url(url, meta['content'])
-                        if img_url and _is_image_like(img_url):
-                            image_urls.append(img_url)
-                
-                for img in soup.find_all('img'):
-                    for attr in ['src', 'data-src', 'data-lazy-src', 'data-original']:
-                        src = img.get(attr)
-                        if src:
-                            resolved_url = _resolve_url(url, src)
-                            if resolved_url and _is_image_like(resolved_url):
-                                if not any(skip in resolved_url.lower() for skip in ['avatar', 'profile', 'icon', 'logo', 'badge']):
-                                    image_urls.append(resolved_url)
-                
-                print(f"Generic extraction found {len(image_urls)} images")
+                # If all strategies failed but we know it's a Reddit post with images
+                if not image_urls and 'i.redd.it' not in url:
+                    image_urls = [f"AI_ANALYZE:{url}"]
+                    print(f"⚠️ Reddit extraction failed - using AI fallback")
+                    
             except Exception as e:
-                print(f"Generic extraction failed: {e}")
-                raise ValueError(f"Failed to fetch URL: {e}")
+                print(f"❌ Reddit extraction failed: {e}")
+                return {"text": f"Content blocked by Reddit: {str(e)}", "image_urls": [f"AI_ANALYZE:{url}"]}
+        
+        # Generic handler
+        else:
+            try:
+                r = requests.get(url, headers=STEALTH_HEADERS, timeout=15, allow_redirects=True)
+                if r.status_code == 200:
+                    doc = Document(r.text)
+                    text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
+                    
+                    soup = BeautifulSoup(r.text, 'lxml')
+                    for prop in ['og:image', 'twitter:image']:
+                        meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
+                        if meta and meta.get('content'):
+                            image_urls.append(meta['content'])
+                            
+            except Exception as e:
+                print(f"❌ Generic extraction failed: {e}")
     
     except Exception as e:
-        print(f"Overall extraction failed: {e}")
-        return {"text": f"Extraction failed: {e}", "image_urls": []}
+        print(f"❌ Overall extraction failed: {e}")
+        return {"text": f"Extraction failed: {str(e)}", "image_urls": [f"AI_ANALYZE:{url}"]}
     
-    # Clean up text - remove common Twitter artifacts
+    # Clean up text
     if text_content:
         text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
         text_content = re.sub(r'https://t\.co/\w+', '', text_content)
         text_content = ' '.join(text_content.split()).strip()
-        
         if len(text_content) > 12000:
             text_content = text_content[:12000] + '…'
     
     # Deduplicate images
-    unique_images = []
+    final_images = []
     seen = set()
     for img_url in image_urls:
-        if img_url and img_url not in seen and _is_image_like(img_url):
-            unique_images.append(img_url)
+        if img_url and img_url not in seen:
+            final_images.append(img_url)
             seen.add(img_url)
     
-    final_images = sorted(unique_images, key=lambda x: (
-        0 if 'pbs.twimg.com' in x else
-        1 if 'pic.twitter.com' in x else 2
-    ))[:5]
-    
-    print(f"FINAL EXTRACTION RESULT:")
-    print(f"  Text: '{text_content[:100]}{'...' if len(text_content) > 100 else ''}' (length: {len(text_content)})")
-    print(f"  Images: {len(final_images)}")
-    for i, img in enumerate(final_images):
-        print(f"    {i+1}: {img}")
+    print(f"🎯 FINAL: Text={len(text_content)} chars, Images={len(final_images)}")
     
     return {
         "text": text_content or "",
@@ -380,7 +344,6 @@ CRITICAL: Return ONLY the JSON object, no other text.
                 }, 200
                 
             except json.JSONDecodeError:
-                # Fallback parsing
                 return {
                     "fact_check_results": [{
                         "claim": text[:200] + "..." if len(text) > 200 else text,
@@ -402,7 +365,7 @@ CRITICAL: Return ONLY the JSON object, no other text.
         return {"error": f"Request failed: {str(e)}"}, 500
 
 def fact_check_image(image_data_url, image_url):
-    """ENHANCED: Fact-check image content with better prompting"""
+    """ENHANCED: Handle both direct images and AI-based URL analysis"""
     if not PERPLEXITY_API_KEY:
         return {"error": "API key not configured"}, 500
     
@@ -411,55 +374,84 @@ def fact_check_image(image_data_url, image_url):
         "Content-Type": "application/json"
     }
     
+    print(f"🔍 ANALYZING: {image_url or 'uploaded image'}")
+    
     try:
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text", 
-                        "text": (
-                            "ANALYZE THIS IMAGE FOR FACTUAL CLAIMS:\n\n"
-                            "1. Read ALL visible text in the image carefully\n"
-                            "2. Identify any quotes, statements, statistics, or claims\n"
-                            "3. Note any person names, titles, dates, or attributions\n"
-                            "4. Look for charts, graphs, or data visualizations\n"
-                            "5. Fact-check ANY verifiable claims you find\n\n"
-                            "If you find factual claims, verify them thoroughly.\n"
-                            "If it's purely decorative/artistic with no factual content, say so.\n\n"
-                            "Return ONLY this JSON format:\n"
-                            '{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 85, "explanation": "Your detailed analysis of what you see and any fact-checking", "sources": ["url1"]}\n\n'
-                            "CRITICAL: Return ONLY the JSON object."
-                        )
-                    }
-                ]
+        # Check if this is an AI_ANALYZE request
+        if image_url and image_url.startswith("AI_ANALYZE:"):
+            actual_url = image_url.replace("AI_ANALYZE:", "")
+            print(f"🤖 AI-based analysis for: {actual_url}")
+            
+            # Use Perplexity to visit and analyze the URL content
+            ai_prompt = f"""
+Visit this social media URL and analyze ALL visual content (images, graphics, charts, infographics):
+{actual_url}
+
+Tasks:
+1. Look for ANY images, graphics, charts, or visual content in the post
+2. Read ALL visible text within images/graphics
+3. Identify factual claims, statistics, quotes, or data points
+4. Note any attributions, sources, or citations shown in visuals
+5. Fact-check any verifiable claims found in the visual content
+
+For the specific URL provided:
+- If Twitter: Look for embedded images, quote cards, screenshots
+- If Reddit: Look for uploaded images, infographics, charts, memes with text
+- Extract and verify any factual information displayed visually
+
+Return ONLY a JSON object:
+{{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 85, "explanation": "Detailed analysis of visual content including specific claims found and their verification", "sources": ["source1.com", "source2.com"]}}
+
+CRITICAL: If you find visual content with factual claims, fact-check them thoroughly. If no visual content or only decorative images, return "NO FACTUAL CLAIMS".
+"""
+            
+            payload = {
+                "model": "sonar-pro",
+                "messages": [{"role": "user", "content": ai_prompt}],
+                "max_tokens": 1000
             }
-        ]
+            
+        else:
+            # Standard image analysis
+            messages = [{
+                "role": "user",
+                "content": [{
+                    "type": "text", 
+                    "text": (
+                        "Analyze this image for factual claims. Look for:\n"
+                        "1. Any text, quotes, or statements\n"
+                        "2. Charts, graphs, or data visualizations\n"
+                        "3. Statistics, numbers, or factual information\n"
+                        "4. Names, dates, locations, or attributions\n\n"
+                        "Return ONLY a JSON object:\n"
+                        '{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 85, "explanation": "Your detailed analysis", "sources": ["url1"]}'
+                    )
+                }]
+            }]
+            
+            if image_data_url:
+                messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
+            elif image_url:
+                messages[0]["content"].append({"type": "image_url", "image_url": image_url})
+            
+            payload = {
+                "model": "sonar-pro",
+                "messages": messages,
+                "max_tokens": 800
+            }
         
-        # Add image
-        if image_data_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
-        elif image_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_url})
+        # Make the request
+        response = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=45)
         
-        print(f"Sending image analysis request for: {image_url or 'uploaded image'}")
+        if response.status_code != 200:
+            print(f"❌ API failed: {response.status_code}")
+            return {"error": f"Analysis failed: HTTP {response.status_code}"}, 500
         
-        payload = {
-            "model": "sonar-pro",
-            "messages": messages,
-            "max_tokens": 800
-        }
-        
-        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=45)
-        
-        if sonar_resp.status_code != 200:
-            print(f"Image analysis API failed with status: {sonar_resp.status_code}")
-            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
-        
-        content = sonar_resp.json()['choices'][0]['message']['content']
-        print(f"Image analysis response: {content[:200]}...")
+        content = response.json()['choices'][0]['message']['content']
+        print(f"📋 Analysis response: {content[:200]}...")
         
         try:
+            # Parse JSON response
             clean_content = content.strip()
             if clean_content.startswith('json'):
                 clean_content = clean_content[4:].strip()
@@ -468,7 +460,7 @@ def fact_check_image(image_data_url, image_url):
             
             result = {
                 "fact_check_results": [{
-                    "claim": "Image Analysis",
+                    "claim": "Visual Content Analysis" if image_url and image_url.startswith("AI_ANALYZE:") else "Image Analysis",
                     "result": {
                         "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
                         "confidence": parsed.get("confidence", 75),
@@ -478,46 +470,38 @@ def fact_check_image(image_data_url, image_url):
                 }],
                 "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
                 "timestamp": time.time(),
-                "source_url": image_url if image_url else None
+                "source_url": image_url if image_url and not image_url.startswith("AI_ANALYZE:") else None
             }
             
-            print(f"Image analysis successful: {parsed.get('verdict')} ({parsed.get('confidence')}%)")
+            print(f"✅ Analysis successful: {parsed.get('verdict')} ({parsed.get('confidence')}%)")
             return result, 200
         
         except json.JSONDecodeError:
-            print(f"Failed to parse JSON, using fallback")
-            # Fallback for non-JSON responses
-            if "no factual claims" in content.lower():
-                verdict = "NO FACTUAL CLAIMS"
-                explanation = "This image does not contain verifiable factual claims."
-            else:
-                verdict = "INSUFFICIENT EVIDENCE"
-                explanation = content
-            
+            print(f"⚠️ JSON parsing failed, using fallback")
             return {
                 "fact_check_results": [{
-                    "claim": "Image Analysis",
+                    "claim": "Visual Content Analysis",
                     "result": {
-                        "verdict": verdict,
+                        "verdict": "INSUFFICIENT EVIDENCE",
                         "confidence": 75,
-                        "explanation": explanation,
+                        "explanation": content,
                         "sources": []
                     }
                 }],
-                "claims_found": 1 if verdict != "NO FACTUAL CLAIMS" else 0,
-                "timestamp": time.time(),
-                "source_url": image_url if image_url else None
+                "claims_found": 1,
+                "timestamp": time.time()
             }, 200
     
     except Exception as e:
-        print(f"Image analysis exception: {e}")
-        return {"error": f"Image analysis failed: {str(e)}"}, 500
+        print(f"❌ Analysis failed: {e}")
+        return {"error": f"Analysis failed: {str(e)}"}, 500
+
 def fact_check_url_with_images(url):
-    """FINAL FIX: Force image analysis even when Twitter APIs fail"""
+    """MAIN FUNCTION: Extract and fact-check both text and images"""
     try:
         print(f"\n=== STARTING FACT-CHECK FOR: {url} ===")
         
-        # Extract content using existing method
+        # Extract content
         content = extract_content_from_url(url)
         text = content.get("text", "").strip()
         image_urls = content.get("image_urls", [])
@@ -540,125 +524,11 @@ def fact_check_url_with_images(url):
             except Exception as e:
                 print(f"Text analysis failed: {e}")
         
-        # CRITICAL FIX: Force image analysis for Twitter posts even if no images detected
+        # Fact-check each image individually
         image_analysis_results = []
-        
-        # For Twitter posts, try to analyze the page content directly as an image
-        if ('twitter.com' in url or 'x.com' in url) and len(image_urls) == 0:
-            print(f"Twitter post detected with no images from API - using fallback method")
-            
-            # Method 1: Try common Twitter image patterns
-            tweet_match = re.search(r'/status/(\d+)', url)
-            if tweet_match:
-                tweet_id = tweet_match.group(1)
-                
-                # Generate potential Twitter image URLs based on common patterns
-                potential_image_urls = [
-                    f"https://pbs.twimg.com/media/{tweet_id}.jpg",
-                    f"https://pbs.twimg.com/media/{tweet_id}.png", 
-                    f"https://pbs.twimg.com/media/{tweet_id}?format=jpg&name=medium",
-                    f"https://pbs.twimg.com/media/{tweet_id}?format=png&name=medium"
-                ]
-                
-                # Also try to extract from the original URL by converting to screenshot
-                print(f"Trying potential Twitter image URLs...")
-                for potential_url in potential_image_urls:
-                    try:
-                        # Test if URL is accessible
-                        test_response = requests.head(potential_url, timeout=5)
-                        if test_response.status_code == 200:
-                            image_urls.append(potential_url)
-                            print(f"Found accessible image: {potential_url}")
-                            break
-                    except:
-                        continue
-            
-            # Method 2: If still no images, create a special analysis request
-            if len(image_urls) == 0:
-                print(f"No images found - creating screenshot-based analysis")
-                
-                # Create a special analysis that asks Perplexity to visit the URL
-                try:
-                    headers = {
-                        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-                        "Content-Type": "application/json"
-                    }
-                    
-                    screenshot_prompt = f"""
-Visit this Twitter/X URL and analyze any visual content (images, graphics, quotes, charts) in the post:
-{url}
-
-Look for:
-1. Any images with text, quotes, or factual claims
-2. Infographics, charts, or data visualizations  
-3. Screenshots of articles or documents
-4. Political quotes or statements with attributions
-
-If you find visual content with factual claims, analyze and fact-check them thoroughly.
-
-Return ONLY a JSON object:
-{{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 85, "explanation": "Your detailed analysis of visual content found in the post", "sources": ["url1"]}}
-
-CRITICAL: If you cannot access the URL or find no visual content, return {{"verdict": "NO FACTUAL CLAIMS", "confidence": 100, "explanation": "Unable to access visual content from this Twitter post", "sources": []}}
-"""
-                    
-                    response = requests.post(
-                        PERPLEXITY_URL,
-                        headers=headers,
-                        json={
-                            "model": "sonar-pro",
-                            "messages": [{"role": "user", "content": screenshot_prompt}],
-                            "max_tokens": 800
-                        },
-                        timeout=45
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        content_analysis = result['choices'][0]['message']['content']
-                        
-                        try:
-                            clean_content = content_analysis.strip()
-                            if clean_content.startswith('json'):
-                                clean_content = clean_content[4:].strip()
-                            
-                            parsed = json.loads(clean_content)
-                            
-                            # Create image analysis result
-                            image_result_summary = {
-                                "image_url": url + "#visual-content",
-                                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
-                                "fact_check_results": [{
-                                    "claim": "Visual Content Analysis",
-                                    "result": {
-                                        "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
-                                        "confidence": parsed.get("confidence", 75),
-                                        "explanation": parsed.get("explanation", "Analysis completed"),
-                                        "sources": parsed.get("sources", [])
-                                    }
-                                }]
-                            }
-                            
-                            image_analysis_results.append(image_result_summary)
-                            
-                            # Add to combined results
-                            fact_check_copy = image_result_summary["fact_check_results"][0].copy()
-                            fact_check_copy['source_type'] = 'image'
-                            fact_check_copy['image_url'] = url + "#visual-content"
-                            all_results.append(fact_check_copy)
-                            
-                            print(f"URL-based visual analysis completed: {parsed.get('verdict')}")
-                            
-                        except json.JSONDecodeError:
-                            print(f"Failed to parse screenshot analysis response")
-                        
-                except Exception as e:
-                    print(f"Screenshot analysis failed: {e}")
-        
-        # Standard image analysis for detected images
         for i, img_url in enumerate(image_urls):
             try:
-                print(f"Analyzing image {i+1}: {img_url}")
+                print(f"Analyzing image/content {i+1}: {img_url}")
                 img_result, status_code = fact_check_image("", img_url)
                 
                 if status_code == 200 and isinstance(img_result, dict):
@@ -682,6 +552,13 @@ CRITICAL: If you cannot access the URL or find no visual content, return {{"verd
                         
             except Exception as e:
                 print(f"Image {i+1} analysis failed: {e}")
+                error_result = {
+                    "image_url": img_url,
+                    "error": str(e),
+                    "claims_found": 0,
+                    "fact_check_results": []
+                }
+                image_analysis_results.append(error_result)
         
         platform = get_platform_name(url)
         
@@ -701,7 +578,6 @@ CRITICAL: If you cannot access the URL or find no visual content, return {{"verd
     except Exception as e:
         print(f"URL analysis failed: {e}")
         return {"error": f"URL analysis failed: {str(e)}"}, 500
-
 
 def get_platform_name(url):
     """Get platform name from URL"""
@@ -730,6 +606,8 @@ class handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
             self.end_headers()
             self.wfile.write(json.dumps(response_data).encode())
         else:
