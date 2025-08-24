@@ -115,6 +115,17 @@ body {
 .subtitle {
     margin-top: 8px;
     color: var(--muted);
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.subtitle-hint {
+    font-size: 0.85rem;
+    color: var(--muted);
+    font-weight: 400;
+    opacity: 0.9;
+    margin-top: 0;
+    line-height: 1.4;
 }
 
 .icon-btn {
