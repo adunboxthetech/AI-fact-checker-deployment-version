@@ -22,6 +22,46 @@ DEFAULT_HEADERS = {
     "Upgrade-Insecure-Requests": "1"
 }
 
+# Enhanced headers for Reddit specifically
+REDDIT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Cache-Control": "max-age=0"
+}
+
+def process_image_url(image_url):
+    """Process image URL to handle redirects and protected URLs"""
+    if not image_url:
+        return None
+    
+    try:
+        # Handle data URLs
+        if image_url.startswith('data:'):
+            return image_url
+        
+        # Handle redirect URLs
+        response = requests.head(image_url, headers=DEFAULT_HEADERS, timeout=10, allow_redirects=True)
+        if response.status_code == 200:
+            return response.url
+        
+        # If HEAD fails, try GET
+        response = requests.get(image_url, headers=DEFAULT_HEADERS, timeout=10, stream=True)
+        if response.status_code == 200:
+            return response.url
+        
+        return image_url
+    except Exception:
+        return image_url
+
 def _build_reddit_json_url(url: str) -> str:
     pu = urlparse(url)
     path = pu.path.rstrip('/')
@@ -72,29 +112,29 @@ def extract_content_from_url(url: str) -> dict:
                 except Exception:
                     pass # Fallback to generic scraper if API fails
 
-        # Reddit handler
+        # Reddit handler - improved with better error handling and fallbacks
         elif 'reddit.com' in netloc or 'redd.it' in netloc:
-            json_url = _build_reddit_json_url(url)
-            try:
-                r = requests.get(json_url, headers=DEFAULT_HEADERS, timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    post_data = data[0]['data']['children'][0]['data']
-                    text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
-                    
-                    # Extract images from various Reddit structures
-                    if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
-                        image_urls.append(post_data['url_overridden_by_dest'])
-                    if 'preview' in post_data:
-                        for img in post_data['preview'].get('images', []):
-                            image_urls.append(img['source']['url'].replace('&amp;', '&'))
-                    if 'media_metadata' in post_data:
-                        for media_id in post_data['media_metadata']:
-                            media = post_data['media_metadata'][media_id]
-                            if media['e'] == 'Image':
-                                image_urls.append(media['s']['u'].replace('&amp;', '&'))
-            except Exception:
-                pass # Fallback to generic scraper
+            # Try multiple approaches for Reddit
+            approaches = [
+                # Approach 1: Try JSON API with enhanced headers
+                lambda: _try_reddit_json_api(url),
+                # Approach 2: Try mobile version
+                lambda: _try_reddit_mobile(url),
+                # Approach 3: Try old.reddit.com
+                lambda: _try_old_reddit(url),
+                # Approach 4: Generic scraper as last resort
+                lambda: _try_generic_reddit_scraper(url)
+            ]
+            
+            for approach in approaches:
+                try:
+                    result = approach()
+                    if result and result.get('text'):
+                        text_content = result['text']
+                        image_urls = result.get('images', [])
+                        break
+                except Exception:
+                    continue
 
         # Generic URL handler (fallback for social media or primary for other sites)
         if not text_content:
@@ -140,6 +180,113 @@ def extract_content_from_url(url: str) -> dict:
         "text": text_content or "No text content found.",
         "image_urls": final_images[:10] # Limit to 10 images
     }
+
+def _try_reddit_json_api(url: str) -> dict:
+    """Try Reddit's JSON API with enhanced headers"""
+    json_url = _build_reddit_json_url(url)
+    try:
+        r = requests.get(json_url, headers=REDDIT_HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            post_data = data[0]['data']['children'][0]['data']
+            text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
+            
+            image_urls = []
+            # Extract images from various Reddit structures
+            if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
+                image_urls.append(post_data['url_overridden_by_dest'])
+            if 'preview' in post_data:
+                for img in post_data['preview'].get('images', []):
+                    image_urls.append(img['source']['url'].replace('&amp;', '&'))
+            if 'media_metadata' in post_data:
+                for media_id in post_data['media_metadata']:
+                    media = post_data['media_metadata'][media_id]
+                    if media['e'] == 'Image':
+                        image_urls.append(media['s']['u'].replace('&amp;', '&'))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
+
+def _try_reddit_mobile(url: str) -> dict:
+    """Try Reddit's mobile version"""
+    try:
+        mobile_url = url.replace('www.reddit.com', 'm.reddit.com')
+        r = requests.get(mobile_url, headers=REDDIT_HEADERS, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            # Extract title and content from mobile version
+            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+            content_elem = soup.find('div', class_='content') or soup.find('div', class_='post-content')
+            
+            title = title_elem.get_text().strip() if title_elem else ""
+            content = content_elem.get_text().strip() if content_elem else ""
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Extract images
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(_resolve_url(url, src))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
+
+def _try_old_reddit(url: str) -> dict:
+    """Try old.reddit.com version"""
+    try:
+        old_url = url.replace('www.reddit.com', 'old.reddit.com')
+        r = requests.get(old_url, headers=REDDIT_HEADERS, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            # Extract title and content from old Reddit
+            title_elem = soup.find('a', class_='title') or soup.find('h1')
+            content_elem = soup.find('div', class_='usertext-body') or soup.find('div', class_='expando')
+            
+            title = title_elem.get_text().strip() if title_elem else ""
+            content = content_elem.get_text().strip() if content_elem else ""
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Extract images
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(_resolve_url(url, src))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
+
+def _try_generic_reddit_scraper(url: str) -> dict:
+    """Generic scraper for Reddit as last resort"""
+    try:
+        r = requests.get(url, headers=REDDIT_HEADERS, timeout=15)
+        if r.status_code == 200:
+            html = r.text
+            doc = Document(html)
+            text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
+            if len(text_content) < 150:
+                text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+            
+            soup = BeautifulSoup(html, 'lxml')
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src') or img.get('data-src')
+                if src and _is_image_like(src):
+                    image_urls.append(_resolve_url(url, src))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
 
 def fact_check_text(text):
     """Simple fact-check function"""
@@ -636,146 +783,6 @@ def get_platform_name(url):
         return "Imgur"
     else:
         return "social media"
-
-def fact_check_text(text):
-    """Simple fact-check function"""
-    if not PERPLEXITY_API_KEY:
-        return {"error": "API key not configured"}, 500
-    
-    headers = {
-        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    prompt = f"""
-    You are a fact-checking assistant. Analyze the following text and fact-check any factual claims.
-    
-    TEXT TO ANALYZE: {text}
-    
-    TASK: If you find factual claims, provide a fact-check analysis. If no factual claims are found, indicate this.
-    
-    RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
-    {{
-        "verdict": "TRUE",
-        "confidence": 95,
-        "explanation": "Your explanation here in plain text, not JSON format",
-        "sources": ["https://example.com/source1", "https://example.com/source2"]
-    }}
-    
-    VERDICT OPTIONS: TRUE, FALSE, PARTIALLY TRUE, INSUFFICIENT EVIDENCE, NO FACTUAL CLAIMS
-    CONFIDENCE: 0-100 (integer)
-    EXPLANATION: Plain text explanation, not JSON
-    SOURCES: Array of URLs as strings
-    
-    CRITICAL REQUIREMENTS: 
-    - Return ONLY the JSON object
-    - Do not include any text before or after
-    - Do not format the explanation as JSON
-    - Use plain text for the explanation field
-    - Do not prefix with "json" or any other text
-    - The response must be parseable by JSON.parse()
-    """
-    
-    try:
-        response = requests.post(
-            PERPLEXITY_URL,
-            headers=headers,
-            json={
-                "model": "sonar-pro",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 500
-            },
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            content = result['choices'][0]['message']['content']
-
-            
-            # Try to parse as JSON, fallback to simple response
-            try:
-                # First, try to clean the content if it has "json" prefix
-                clean_content = content.strip()
-                if clean_content.startswith('json '):
-                    clean_content = clean_content[5:].strip()
-                
-                parsed = json.loads(clean_content)
-                # Format for frontend: create fact_check_results array
-                fact_check_result = {
-                    "claim": text[:200] + "..." if len(text) > 200 else text,
-                    "result": parsed,
-                    "status": "ANALYSIS COMPLETE"
-                }
-                return {
-                    "fact_check_results": [fact_check_result],
-                    "original_text": text,
-                    "claims_found": 1,
-                    "timestamp": time.time()
-                }, 200
-            except:
-                # If the content looks like JSON but failed to parse, try to extract useful parts
-                if '"verdict"' in content and '"explanation"' in content:
-                    # Try to extract key parts using regex
-                    verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
-                    confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
-                    explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                    sources_match = re.search(r'"sources":\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
-                    
-                    verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
-                    confidence = int(confidence_match.group(1)) if confidence_match else 75
-                    explanation = explanation_match.group(1) if explanation_match else content
-                    sources = ["Perplexity Analysis"]
-                    
-
-                    
-                    if sources_match:
-                        # Try to extract URLs from sources
-                        sources_text = sources_match.group(1)
-                        # Look for URLs in the sources text, handling quoted strings
-                        url_matches = re.findall(r'https?://[^"\s,]+', sources_text)
-                        if url_matches:
-                            sources = url_matches
-                        else:
-                            # Fallback: try to extract from the full content
-                            all_urls = re.findall(r'https?://[^"\s,]+', content)
-                            if all_urls:
-                                sources = all_urls[:5]  # Limit to first 5 URLs
-                    
-                    fact_check_result = {
-                        "claim": text[:200] + "..." if len(text) > 200 else text,
-                        "result": {
-                            "verdict": verdict,
-                            "confidence": confidence,
-                            "explanation": explanation,
-                            "sources": sources
-                        },
-                        "status": "ANALYSIS COMPLETE"
-                    }
-                else:
-                    # Fallback response
-                    fact_check_result = {
-                        "claim": text[:200] + "..." if len(text) > 200 else text,
-                        "result": {
-                            "verdict": "INSUFFICIENT EVIDENCE",
-                            "confidence": 75,
-                            "explanation": content,
-                            "sources": ["Perplexity Analysis"]
-                        },
-                        "status": "ANALYSIS COMPLETE"
-                    }
-                
-                return {
-                    "fact_check_results": [fact_check_result],
-                    "original_text": text,
-                    "claims_found": 1,
-                    "timestamp": time.time()
-                }, 200
-        else:
-            return {"error": f"API request failed: {response.status_code}"}, 500
-            
-    except Exception as e:
-        return {"error": f"Request failed: {str(e)}"}, 500
 
 def fact_check_image(image_data_url, image_url):
     """Fact-check claims from an image using Perplexity's multimodal capabilities"""
