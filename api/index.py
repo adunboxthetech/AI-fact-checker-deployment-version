@@ -128,12 +128,48 @@ def _is_image_like(url: str) -> bool:
         "redditstatic.com"
     ])
 
+def _detect_images_in_url(url: str) -> dict:
+    """Detect if a URL contains images and provide appropriate messaging."""
+    try:
+        # Check for common image patterns in URLs
+        image_patterns = [
+            r'pic\.twitter\.com',
+            r'i\.redd\.it',
+            r'preview\.redd\.it',
+            r'imgur\.com',
+            r'\.(jpg|jpeg|png|gif|webp|svg)',
+            r'redditmedia\.com',
+            r'redditstatic\.com'
+        ]
+        
+        has_images = any(re.search(pattern, url, re.IGNORECASE) for pattern in image_patterns)
+        
+        if has_images:
+            return {
+                "has_images": True,
+                "message": "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking.",
+                "image_detected": True
+            }
+        else:
+            return {
+                "has_images": False,
+                "message": "",
+                "image_detected": False
+            }
+    except Exception:
+        return {
+            "has_images": False,
+            "message": "",
+            "image_detected": False
+        }
+
 def extract_content_from_url(url: str) -> dict:
     """Extracts text and image URLs from a given URL with platform-specific logic."""
     parsed_url = urlparse(url)
     netloc = parsed_url.netloc
     text_content = ""
     image_urls = []
+    image_detection_info = _detect_images_in_url(url)
 
     try:
         # Twitter/X handler - completely rewritten with multiple robust approaches
@@ -240,9 +276,16 @@ def extract_content_from_url(url: str) -> dict:
     unique_images = sorted(list(set(filter(None, image_urls))))
     final_images = [img for img in unique_images if _is_image_like(img)]
 
+    # Update image detection info based on actual extraction
+    if image_detection_info["has_images"] or len(final_images) > 0:
+        image_detection_info["image_detected"] = True
+        if len(final_images) == 0:
+            image_detection_info["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
+
     return {
         "text": text_content or "No text content found.",
-        "image_urls": final_images[:10] # Limit to 10 images
+        "image_urls": final_images[:10], # Limit to 10 images
+        "image_detection_info": image_detection_info
     }
 
 def _try_reddit_api_with_id(url: str) -> dict:
@@ -909,6 +952,7 @@ def fact_check_url_with_images(url):
         content = extract_content_from_url(url)
         text = content["text"]
         image_urls = content["image_urls"]
+        image_detection_info = content.get("image_detection_info", {})
         
         # If we have images, use multimodal analysis
         if image_urls and len(image_urls) > 0:
@@ -957,6 +1001,7 @@ def fact_check_url_with_images(url):
                         image_data['selected_image_url'] = primary_image_url
                         image_data['source_url'] = url
                         image_data['debug_image_urls'] = image_urls[:10]
+                        image_data['image_detection_info'] = image_detection_info
                         return image_data, 200
             except Exception as e:
                 # If multimodal analysis fails, fall back to text-only analysis
@@ -972,9 +1017,17 @@ def fact_check_url_with_images(url):
                     if image_urls:
                         for result in text_data['fact_check_results']:
                             result['claim'] = f"Text Analysis (with {len(image_urls)} image(s) detected): {result.get('claim', 'Content Analysis')}"
+                    elif image_detection_info.get("image_detected", False):
+                        # Images were detected but couldn't be accessed
+                        for result in text_data['fact_check_results']:
+                            result['claim'] = f"Text Analysis (images detected but not accessible): {result.get('claim', 'Content Analysis')}"
+                        # Add image detection message
+                        text_data['image_detection_message'] = image_detection_info.get("message", "")
+                    
                     text_data['images_detected'] = len(image_urls)
                     text_data['source_url'] = url
                     text_data['debug_image_urls'] = image_urls[:10]
+                    text_data['image_detection_info'] = image_detection_info
                     return text_data, 200
         
         # If no results, create a default response
@@ -988,14 +1041,21 @@ def fact_check_url_with_images(url):
             }
         }]
         
-        return {
+        response_data = {
             "fact_check_results": results,
             "original_text": text,
             "claims_found": len(results),
             "source_url": url,
             "images_detected": len(image_urls),
-            "debug_image_urls": image_urls[:10]
-        }, 200
+            "debug_image_urls": image_urls[:10],
+            "image_detection_info": image_detection_info
+        }
+        
+        # Add image detection message if images were detected but not accessible
+        if image_detection_info.get("image_detected", False) and len(image_urls) == 0:
+            response_data['image_detection_message'] = image_detection_info.get("message", "")
+        
+        return response_data, 200
         
     except Exception as e:
         return {"error": f"URL analysis failed: {str(e)}"}, 500
@@ -1170,7 +1230,18 @@ def _try_twitter_oembed_api(url: str) -> dict:
         r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            text_content = data.get('html', '').replace('<blockquote>', '').replace('</blockquote>', '').strip()
+            
+            # Extract text content from HTML
+            html_content = data.get('html', '')
+            if html_content:
+                # Parse HTML and extract text content
+                soup = BeautifulSoup(html_content, 'lxml')
+                # Remove blockquote tags and extract text
+                text_content = soup.get_text(' ', strip=True)
+                # Clean up the text
+                text_content = re.sub(r'\s+', ' ', text_content).strip()
+            else:
+                text_content = data.get('title', '')
             
             image_urls = []
             if data.get('photo'):

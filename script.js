@@ -261,8 +261,29 @@ class FactCheckerApp {
                 imgInfo.style.margin = '4px 0 12px';
                 imgInfo.style.color = 'var(--muted)';
                 imgInfo.style.fontSize = '0.9rem';
-                imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. ${data.images_detected > 0 ? 'Visual content was considered in the analysis.' : 'No images detected.'}`;
+                
+                // Check if images were detected but not accessible
+                if (data.images_detected === 0 && data.image_detection_info && data.image_detection_info.image_detected) {
+                    imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> Images found in this post, but they cannot be accessed directly from the URL.`;
+                    imgInfo.style.color = 'var(--warning)';
+                } else {
+                    imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. ${data.images_detected > 0 ? 'Visual content was considered in the analysis.' : 'No images detected.'}`;
+                }
                 this.resultsContainer.appendChild(imgInfo);
+                
+                // Add image detection message if available
+                if (data.image_detection_message) {
+                    const msgDiv = document.createElement('div');
+                    msgDiv.style.margin = '8px 0 12px';
+                    msgDiv.style.padding = '8px 12px';
+                    msgDiv.style.backgroundColor = 'var(--warning-bg)';
+                    msgDiv.style.border = '1px solid var(--warning)';
+                    msgDiv.style.borderRadius = '6px';
+                    msgDiv.style.color = 'var(--warning)';
+                    msgDiv.style.fontSize = '0.9rem';
+                    msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(data.image_detection_message)}`;
+                    this.resultsContainer.appendChild(msgDiv);
+                }
             }
             const selected = data.selected_image_url || (Array.isArray(data.debug_image_urls) && data.debug_image_urls.length ? data.debug_image_urls[0] : null);
             if (selected) {
