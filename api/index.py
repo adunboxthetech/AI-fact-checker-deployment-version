@@ -136,24 +136,35 @@ def extract_content_from_url(url: str) -> dict:
     image_urls = []
 
     try:
-        # Twitter/X handler
+        # Twitter/X handler - completely rewritten with multiple robust approaches
         if 'twitter.com' in netloc or 'x.com' in netloc:
-            match = re.search(r'/status/(\d+)', parsed_url.path)
-            if match:
-                tweet_id = match.group(1)
-                # Use Twitter's syndication API for reliable content
-                api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
+            # Try multiple approaches for Twitter/X with better error handling
+            approaches = [
+                # Approach 1: Try Twitter's syndication API
+                lambda: _try_twitter_syndication_api(url),
+                # Approach 2: Try Twitter's oEmbed API
+                lambda: _try_twitter_oembed_api(url),
+                # Approach 3: Try with enhanced headers
+                lambda: _try_twitter_with_enhanced_headers(url),
+                # Approach 4: Try mobile version
+                lambda: _try_twitter_mobile(url),
+                # Approach 5: Try with session and cookies
+                lambda: _try_twitter_with_session(url),
+                # Approach 6: Generic scraper as last resort
+                lambda: _try_generic_twitter_scraper(url)
+            ]
+            
+            for i, approach in enumerate(approaches):
                 try:
-                    r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=10)
-                    if r.status_code == 200:
-                        data = r.json()
-                        text_content = data.get('text', '')
-                        for photo in data.get('photos', []):
-                            image_urls.append(photo.get('url'))
-                        if data.get('video'):
-                            image_urls.append(data['video'].get('poster'))
-                except Exception:
-                    pass # Fallback to generic scraper if API fails
+                    result = approach()
+                    if result and result.get('text') and len(result['text'].strip()) > 5:
+                        text_content = result['text']
+                        image_urls = result.get('images', [])
+                        print(f"Twitter extraction succeeded with approach {i+1}")
+                        break
+                except Exception as e:
+                    print(f"Twitter approach {i+1} failed: {str(e)}")
+                    continue
 
         # Reddit handler - completely rewritten with multiple robust approaches
         elif 'reddit.com' in netloc or 'redd.it' in netloc:
@@ -182,6 +193,8 @@ def extract_content_from_url(url: str) -> dict:
                         text_content = result['text']
                         image_urls = result.get('images', [])
                         print(f"Reddit extraction succeeded with approach {i+1}")
+                        print(f"Reddit images found: {len(image_urls)}")
+                        print(f"Reddit image URLs: {image_urls}")
                         break
                 except Exception as e:
                     print(f"Reddit approach {i+1} failed: {str(e)}")
@@ -1115,135 +1128,251 @@ def get_platform_name(url):
     else:
         return "social media"
 
-def fact_check_image(image_data_url, image_url):
-    """Fact-check claims from an image using Perplexity's multimodal capabilities"""
-    if not PERPLEXITY_API_KEY:
-        return {"error": "API key not configured"}, 500
-    
-    headers = {
-        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
+def _try_twitter_syndication_api(url: str) -> dict:
+    """Try Twitter's syndication API for content and images."""
     try:
-        # Build Perplexity multimodal prompt for direct fact-checking
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": (
-                        "You are a visual fact-checking expert. Analyze this image comprehensively using your visual understanding capabilities. "
-                        "Look at the image as a whole - examine charts, graphs, text, images, symbols, and visual elements. "
-                        "Identify any factual claims, statistics, data, or statements that can be verified. "
-                        "For charts/graphs: Analyze the data, labels, sources, and methodology. "
-                        "For text: Read and verify any claims, quotes, or statements. "
-                        "For images: Identify any factual content, dates, names, or verifiable information. "
-                        "If the image contains factual claims, provide a thorough fact-check analysis. "
-                        "If the image is purely visual (art, abstract, decorative) with no factual content, indicate this. "
-                        "Return ONLY a valid JSON object with this exact structure: "
-                        "{"
-                        '"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",'
-                        '"confidence": 0-100,'
-                        '"explanation": "Your detailed visual analysis here",'
-                        '"sources": ["url1", "url2"]'
-                        "}"
-                        "CRITICAL: Return ONLY the JSON object, no other text. Use your visual understanding to analyze the image content, not just extract text."
-                    )}
-                ]
-            }
-        ]
+        # Extract tweet ID from URL
+        tweet_id = re.search(r'/status/(\d+)', url)
+        if not tweet_id:
+            return None
         
-        # Handle different types of image URLs
-        if image_data_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
-        elif image_url:
-            # Try to handle redirect URLs and protected URLs
-            processed_url = process_image_url(image_url)
-            messages[0]["content"].append({"type": "image_url", "image_url": processed_url})
-
-        payload = {
-            "model": "sonar-pro",  # supports vision per Perplexity docs
-            "messages": messages,
-            "max_tokens": 800,
-        }
-
-        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
-        if sonar_resp.status_code != 200:
-            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
-
-        content = sonar_resp.json()['choices'][0]['message']['content']
+        tweet_id = tweet_id.group(1)
+        api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
         
-        # Try to parse the response as JSON
-        try:
-            # Clean the content if it has "json" prefix
-            clean_content = content.strip()
-            if clean_content.startswith('json '):
-                clean_content = clean_content[5:].strip()
+        r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            text_content = data.get('text', '')
             
-            parsed = json.loads(clean_content)
+            image_urls = []
+            if data.get('photos'):
+                for photo in data['photos']:
+                    image_urls.append(photo.get('url'))
+            if data.get('video'):
+                image_urls.append(data['video'].get('poster'))
             
-            # Create the result structure
-            result = {
-                "fact_check_results": [{
-                    "claim": "Image Analysis",
-                    "result": {
-                        "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
-                        "confidence": parsed.get("confidence", 75),
-                        "explanation": parsed.get("explanation", "Analysis completed"),
-                        "sources": parsed.get("sources", [])
-                    }
-                }],
-                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
-                "timestamp": time.time(),
-                "source_url": image_url if image_url else None
-            }
-            
-            return result, 200
-            
-        except json.JSONDecodeError:
-            # If JSON parsing fails, try to extract useful information
-            if "no factual claims" in content.lower() or "no claims" in content.lower():
-                return {
-                    "fact_check_results": [{
-                        "claim": "Image Analysis",
-                        "result": {
-                            "verdict": "NO FACTUAL CLAIMS",
-                            "confidence": 100,
-                            "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 0,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
-            else:
-                # Try to extract verdict and explanation from the text
-                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
-                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
-                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                
-                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
-                confidence = int(confidence_match.group(1)) if confidence_match else 75
-                explanation = explanation_match.group(1) if explanation_match else content
-                
-                return {
-                    "fact_check_results": [{
-                        "claim": "Image Analysis",
-                        "result": {
-                            "verdict": verdict,
-                            "confidence": confidence,
-                            "explanation": explanation,
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 1,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
 
-    except Exception as e:
-        return {"error": f"Image analysis failed: {str(e)}"}, 500
+def _try_twitter_oembed_api(url: str) -> dict:
+    """Try Twitter's oEmbed API for content and images."""
+    try:
+        # Extract tweet ID from URL
+        tweet_id = re.search(r'/status/(\d+)', url)
+        if not tweet_id:
+            return None
+        
+        tweet_id = tweet_id.group(1)
+        oembed_url = f"https://publish.twitter.com/oembed?url={url}"
+        
+        r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            text_content = data.get('html', '').replace('<blockquote>', '').replace('</blockquote>', '').strip()
+            
+            image_urls = []
+            if data.get('photo'):
+                image_urls.append(data['photo'])
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
+
+def _try_twitter_with_enhanced_headers(url: str) -> dict:
+    """Try Twitter/X with enhanced headers."""
+    try:
+        # Construct a mobile URL if it's a Twitter URL
+        if 'twitter.com' in url:
+            mobile_url = url.replace('twitter.com', 'm.twitter.com')
+        elif 'x.com' in url:
+            mobile_url = url.replace('x.com', 'm.x.com')
+        else:
+            return None # Not a Twitter/X URL
+        
+        r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            # Try to extract title and content
+            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
+            
+            title = title_elem.get_text().strip() if title_elem else ""
+            content = content_elem.get_text().strip() if content_elem else ""
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Extract images
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(_resolve_url(url, src))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
+
+def _try_twitter_mobile(url: str) -> dict:
+    """Try Twitter/X's mobile version."""
+    try:
+        # Construct a mobile URL if it's a Twitter URL
+        if 'twitter.com' in url:
+            mobile_url = url.replace('twitter.com', 'm.twitter.com')
+        elif 'x.com' in url:
+            mobile_url = url.replace('x.com', 'm.x.com')
+        else:
+            return None # Not a Twitter/X URL
+        
+        r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            # Enhanced selectors for mobile Twitter/X
+            title_selectors = ['h1', 'h2', 'h3', '[data-testid="post-title"]', '.title']
+            content_selectors = ['.content', '.post-content', '[data-testid="post-content"]', '.RichTextJSON-root']
+            
+            title = ""
+            for selector in title_selectors:
+                title_elem = soup.select_one(selector)
+                if title_elem:
+                    title = title_elem.get_text().strip()
+                    break
+            
+            content = ""
+            for selector in content_selectors:
+                content_elem = soup.select_one(selector)
+                if content_elem:
+                    content = content_elem.get_text().strip()
+                    break
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Enhanced image extraction for mobile Twitter/X
+            image_urls = []
+            
+            # Look for images in various mobile Twitter/X patterns
+            img_selectors = [
+                'img[src*="twitter.com"]',
+                'img[src*="x.com"]',
+                'img[src*="pic.twitter.com"]',
+                'img[src*="cdninstagram.com"]',
+                'img[src*="fbcdn.net"]',
+                'img[src*="imgur.com"]',
+                'img[data-src*="twitter.com"]',
+                'img[data-src*="x.com"]',
+                'img[data-src*="pic.twitter.com"]',
+                'img[data-src*="cdninstagram.com"]',
+                'img[data-src*="fbcdn.net"]',
+                'img[data-src*="imgur.com"]',
+                '.post-image img',
+                '.image-post img',
+                '.gallery img',
+                '.media img'
+            ]
+            
+            for selector in img_selectors:
+                for img in soup.select(selector):
+                    src = img.get('src') or img.get('data-src')
+                    if src and _is_image_like(src):
+                        # Clean up Twitter/X image URLs
+                        if 'twitter.com' in src:
+                            src = src.replace('twitter.com', 'm.twitter.com')
+                        elif 'x.com' in src:
+                            src = src.replace('x.com', 'm.x.com')
+                        elif 'pic.twitter.com' in src:
+                            src = src.replace('pic.twitter.com', 'm.pic.twitter.com')
+                        image_urls.append(_resolve_url(url, src))
+            
+            # Also look for background images in CSS
+            for elem in soup.find_all(style=True):
+                style_content = elem.get_text()
+                # Extract URLs from CSS background-image properties
+                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
+                for bg_url in bg_urls:
+                    if _is_image_like(bg_url):
+                        image_urls.append(_resolve_url(url, bg_url))
+            
+            # Remove duplicates
+            unique_images = []
+            seen_urls = set()
+            for img_url in image_urls:
+                if img_url and img_url not in seen_urls:
+                    unique_images.append(img_url)
+                    seen_urls.add(img_url)
+            
+            return {"text": text_content, "images": unique_images}
+    except Exception:
+        pass
+    return None
+
+def _try_twitter_with_session(url: str) -> dict:
+    """Try Twitter/X with session and cookies."""
+    try:
+        session = requests.Session()
+        session.headers.update(BROWSER_HEADERS)
+        
+        # First, visit the main page to get cookies
+        session.get('https://twitter.com', timeout=10) # Twitter
+        session.get('https://x.com', timeout=10) # X
+        
+        # Then try to access the specific post
+        r = session.get(url, timeout=10)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            # Try to extract content
+            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
+            
+            title = title_elem.get_text().strip() if title_elem else ""
+            content = content_elem.get_text().strip() if content_elem else ""
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Extract images
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(_resolve_url(url, src))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
+
+def _try_generic_twitter_scraper(url: str) -> dict:
+    """Generic scraper for Twitter/X as last resort."""
+    try:
+        r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            # Try to extract title and content
+            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
+            
+            title = title_elem.get_text().strip() if title_elem else ""
+            content = content_elem.get_text().strip() if content_elem else ""
+            
+            text_content = f"{title} {content}".strip()
+            
+            # Extract images
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(_resolve_url(url, src))
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    return None
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
