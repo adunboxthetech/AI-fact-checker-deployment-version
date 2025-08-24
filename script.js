@@ -154,7 +154,7 @@ class FactCheckerApp {
         try {
             let response;
             if (hasImage) {
-                response = await fetch(`${this.apiUrl}/fact-check-image`, {
+                response = await fetch(`${this.apiUrl}/api/fact-check-image`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ image_data_url: this.imageDataUrl })
