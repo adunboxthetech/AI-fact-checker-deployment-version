@@ -12,6 +12,38 @@ from readability import Document
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
+def _looks_like_block_page(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    block_markers = [
+        'you have been blocked',
+        'forbidden',
+        'access denied',
+        'security policy',
+        'verify you are a human',
+        'cloudflare',
+        'attention required',
+        'not allowed to access',
+        'please enable cookies',
+        'warning: target url returned error 403'
+    ]
+    return any(m in t for m in block_markers)
+
+def _fetch_proxied_html(url: str, headers: dict) -> str:
+    candidates = [
+        f"https://api.allorigins.win/raw?url={url}",
+        f"https://r.jina.ai/{url}"
+    ]
+    for u in candidates:
+        try:
+            r = requests.get(u, headers=headers, timeout=15)
+            if r.status_code == 200 and r.text and len(r.text) > 50:
+                return r.text
+        except Exception:
+            continue
+    return ''
+
 def _build_reddit_json_url(url: str) -> str:
     """Build a proper Reddit JSON URL, inserting .json before query and adding raw_json=1."""
     pu = urlparse(url)
@@ -250,7 +282,9 @@ def extract_text_from_url(url):
             wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
             jr = requests.get(wrapped, headers=headers, timeout=18)
             if jr.status_code == 200 and len(jr.text.strip()) > 50:
-                return re.sub(r'\s+', ' ', jr.text).strip()
+                cleaned = re.sub(r'\s+', ' ', jr.text).strip()
+                if not _looks_like_block_page(cleaned):
+                    return cleaned
         except Exception as e:
             pass
         
@@ -275,8 +309,7 @@ def extract_text_from_url(url):
                     soup = BeautifulSoup(proxy_response.text, "lxml")
                     text = soup.get_text(separator=" ", strip=True)
                     text = re.sub(r'\s+', ' ', text).strip()
-                    
-                    if len(text) > 50:
+                    if not _looks_like_block_page(text) and len(text) > 50:
                         return text
                         
             except Exception as e:
@@ -306,17 +339,14 @@ def extract_content_from_url(url):
         if response.status_code != 200:
             # Fall back to robust text extractor (handles Reddit JSON and Jina Reader)
             text = extract_text_from_url(url)
-            # Try to get HTML via Jina Reader for OG/Twitter image extraction
+            # Try to get RAW HTML via AllOrigins (contains meta tags) for OG/Twitter image extraction
+            soup = BeautifulSoup('', 'lxml')
             try:
-                q = f"?{parsed_url.query}" if parsed_url.query else ""
-                wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
-                jr = requests.get(wrapped, headers=headers, timeout=18)
-                if jr.status_code == 200 and jr.text:
-                    soup = BeautifulSoup(jr.text, 'lxml')
-                else:
-                    soup = BeautifulSoup('', 'lxml')
+                ao = requests.get(f"https://api.allorigins.win/raw?url={url}", headers=headers, timeout=18)
+                if ao.status_code == 200 and ao.text:
+                    soup = BeautifulSoup(ao.text, 'lxml')
             except Exception:
-                soup = BeautifulSoup('', 'lxml')
+                pass
         else:
             # Parse HTML content
             soup = BeautifulSoup(response.text, 'lxml')
@@ -356,9 +386,20 @@ def extract_content_from_url(url):
         image_urls.extend(text_image_urls)
         
         # Strategy 4: Look for Open Graph and Twitter Card images
+        og_images = []
         if soup and soup.find_all:
             og_images = extract_og_images(soup, parsed_url)
             image_urls.extend(og_images)
+        # If we didn't find OG images and site may be JS-rendered (e.g., Reddit), try proxied HTML
+        if (not og_images) and parsed_url.netloc.endswith('reddit.com'):
+            try:
+                proxied_html = _fetch_proxied_html(url, headers)
+                if proxied_html:
+                    proxied_soup = BeautifulSoup(proxied_html, 'lxml')
+                    proxied_ogs = extract_og_images(proxied_soup, parsed_url)
+                    image_urls.extend(proxied_ogs)
+            except Exception:
+                pass
         
         # Remove duplicates and filter
         unique_images = []
@@ -462,6 +503,29 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
                                 continue
                     except Exception:
                         continue
+            # Additional fallback: Reddit api/info.json by URL
+            if data is None:
+                try:
+                    info_url = f"https://www.reddit.com/api/info.json?{urlencode({'url': url, 'raw_json': 1})}"
+                    ir = requests.get(info_url, headers=rj_headers, timeout=12)
+                    if ir.status_code != 200:
+                        # try proxies
+                        for p in [f"https://api.allorigins.win/raw?url={info_url}", f"https://r.jina.ai/{info_url}"]:
+                            try:
+                                pir = requests.get(p, headers=rj_headers, timeout=12)
+                                if pir.status_code == 200 and pir.text:
+                                    ir = pir
+                                    break
+                            except Exception:
+                                continue
+                    if ir.status_code == 200:
+                        info = json.loads(ir.text)
+                        # find first child data
+                        children = info.get('data', {}).get('children', [])
+                        if children:
+                            data = {"data": {"children": children}}
+                except Exception:
+                    pass
             post = {}
             if data is not None:
                 try:
