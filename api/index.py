@@ -81,7 +81,7 @@ def _is_image_like(url):
     return False
 
 def extract_content_from_url(url):
-    """Enhanced content extraction with better Twitter handling"""
+    """FIXED: Extract both text and images with proper Twitter handling"""
     parsed_url = urlparse(url)
     netloc = parsed_url.netloc
     text_content = ""
@@ -90,140 +90,86 @@ def extract_content_from_url(url):
     print(f"Extracting content from: {url}")
     
     try:
-        # Enhanced Twitter/X handler with multiple fallback strategies
+        # Enhanced Twitter/X handler
         if 'twitter.com' in netloc or 'x.com' in netloc:
             match = re.search(r'/status/(\d+)', parsed_url.path)
             if match:
                 tweet_id = match.group(1)
                 print(f"Processing Twitter/X tweet ID: {tweet_id}")
                 
-                # Method 1: Twitter syndication API
+                # Method 1: Twitter syndication API with better parsing
                 try:
                     api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
                     r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=15)
                     if r.status_code == 200:
                         data = r.json()
-                        # Check if we got actual tweet data, not error data
-                        if data.get('text') and 'something went wrong' not in data.get('text', '').lower():
-                            text_content = data.get('text', '')
-                            print(f"Twitter API success: {text_content[:100]}...")
-                            
-                            # Extract photos
-                            for photo in data.get('photos', []):
-                                img_url = photo.get('url')
-                                if img_url:
-                                    image_urls.append(img_url)
-                                    print(f"Found Twitter photo: {img_url}")
-                            
-                            # Extract video poster
-                            if data.get('video') and data['video'].get('poster'):
-                                image_urls.append(data['video']['poster'])
+                        
+                        # Get the actual tweet text, not the metadata
+                        tweet_text = data.get('text', '').strip()
+                        
+                        # Filter out metadata-only content
+                        if tweet_text and not re.match(r'^[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\s@\w\./:-]*$', tweet_text):
+                            text_content = tweet_text
+                            print(f"Twitter API extracted text: {text_content[:100]}...")
                         else:
-                            print("Twitter API returned error content, trying fallbacks...")
+                            print("Twitter API returned metadata only, no meaningful text")
+                        
+                        # Extract photos - CRITICAL FIX
+                        for photo in data.get('photos', []):
+                            img_url = photo.get('url')
+                            if img_url:
+                                image_urls.append(img_url)
+                                print(f"Found Twitter photo: {img_url}")
+                        
+                        # Extract video poster
+                        if data.get('video') and data['video'].get('poster'):
+                            image_urls.append(data['video']['poster'])
+                            print(f"Found Twitter video poster: {data['video']['poster']}")
+                        
+                        print(f"Twitter API extracted {len(image_urls)} images")
+                        
                 except Exception as e:
                     print(f"Twitter syndication API failed: {e}")
                 
-                # Method 2: oEmbed API fallback (only if syndication failed)
-                if not text_content or 'something went wrong' in text_content.lower():
+                # Method 2: oEmbed fallback with better parsing
+                if not text_content and not image_urls:
                     try:
                         oembed_url = f"https://publish.twitter.com/oembed?url={url}"
                         r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=15)
                         if r.status_code == 200:
                             oembed_data = r.json()
                             html_content = oembed_data.get('html', '')
+                            
                             if html_content:
                                 soup = BeautifulSoup(html_content, 'lxml')
-                                # Extract text from blockquote or p tags
-                                text_elements = soup.find_all(['blockquote', 'p'])
-                                extracted_text = ' '.join([elem.get_text(strip=True) for elem in text_elements])
-                                if extracted_text and 'something went wrong' not in extracted_text.lower():
-                                    text_content = extracted_text
-                                    print(f"oEmbed success: {text_content[:100]}...")
                                 
-                                # Extract images
+                                # Better text extraction from oEmbed HTML
+                                blockquote = soup.find('blockquote')
+                                if blockquote:
+                                    # Remove links and extract clean text
+                                    for link in blockquote.find_all('a'):
+                                        link.decompose()
+                                    
+                                    text_content = blockquote.get_text(strip=True)
+                                    # Clean up common Twitter artifacts
+                                    text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
+                                    text_content = re.sub(r'https://t\.co/\w+', '', text_content)
+                                    text_content = text_content.strip()
+                                    
+                                    if text_content:
+                                        print(f"oEmbed extracted text: {text_content[:100]}...")
+                                
+                                # Extract images from oEmbed
                                 for img in soup.find_all('img'):
                                     src = img.get('src')
                                     if src and _is_image_like(src):
                                         image_urls.append(src)
                                         print(f"Found oEmbed image: {src}")
+                                        
+                                print(f"oEmbed extracted {len(image_urls)} images")
+                                
                     except Exception as e:
                         print(f"Twitter oEmbed failed: {e}")
-                
-                # Method 3: Nitter fallback (privacy-focused Twitter frontend)
-                if not text_content or 'something went wrong' in text_content.lower():
-                    try:
-                        # Try nitter instances
-                        nitter_instances = ['nitter.net', 'nitter.it', 'nitter.privacy.com.de']
-                        for instance in nitter_instances:
-                            try:
-                                nitter_url = url.replace('twitter.com', instance).replace('x.com', instance)
-                                r = requests.get(nitter_url, headers=DEFAULT_HEADERS, timeout=10)
-                                if r.status_code == 200:
-                                    soup = BeautifulSoup(r.text, 'lxml')
-                                    
-                                    # Look for tweet content in nitter's structure
-                                    tweet_content = soup.find('div', class_='tweet-content')
-                                    if tweet_content:
-                                        text_content = tweet_content.get_text(strip=True)
-                                        print(f"Nitter success: {text_content[:100]}...")
-                                        
-                                        # Look for images
-                                        for img in soup.find_all('img'):
-                                            src = img.get('src')
-                                            if src and _is_image_like(src):
-                                                # Convert nitter image URLs to Twitter URLs
-                                                if src.startswith('/pic/'):
-                                                    twitter_img_url = f"https://pbs.twimg.com/media/{src.split('/')[-1]}"
-                                                    image_urls.append(twitter_img_url)
-                                                elif src.startswith('http'):
-                                                    image_urls.append(src)
-                                        break
-                            except Exception as e:
-                                print(f"Nitter instance {instance} failed: {e}")
-                                continue
-                    except Exception as e:
-                        print(f"Nitter fallback failed: {e}")
-                
-                # Method 4: Direct scraping with better headers (last resort)
-                if not text_content or 'something went wrong' in text_content.lower():
-                    try:
-                        twitter_headers = {
-                            **DEFAULT_HEADERS,
-                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-                            "Accept-Language": "en-US,en;q=0.9",
-                            "Cache-Control": "no-cache",
-                            "Pragma": "no-cache",
-                            "Sec-Fetch-Dest": "document",
-                            "Sec-Fetch-Mode": "navigate",
-                            "Sec-Fetch-Site": "none",
-                            "Sec-Fetch-User": "?1"
-                        }
-                        
-                        r = requests.get(url, headers=twitter_headers, timeout=15)
-                        if r.status_code == 200:
-                            soup = BeautifulSoup(r.text, 'lxml')
-                            
-                            # Look for tweet content in various possible structures
-                            selectors = [
-                                'div[data-testid="tweetText"]',
-                                'div[lang]',
-                                '[data-testid="tweet"] div[lang]',
-                                '.tweet-text',
-                                '[role="article"] div[lang]'
-                            ]
-                            
-                            for selector in selectors:
-                                elements = soup.select(selector)
-                                for element in elements:
-                                    candidate_text = element.get_text(strip=True)
-                                    if candidate_text and len(candidate_text) > 10 and 'something went wrong' not in candidate_text.lower():
-                                        text_content = candidate_text
-                                        print(f"Direct scraping success: {text_content[:100]}...")
-                                        break
-                                if text_content:
-                                    break
-                    except Exception as e:
-                        print(f"Direct Twitter scraping failed: {e}")
         
         # Reddit handler (unchanged)
         elif 'reddit.com' in netloc or 'redd.it' in netloc:
@@ -235,7 +181,6 @@ def extract_content_from_url(url):
                     post_data = data[0]['data']['children'][0]['data']
                     text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
                     
-                    # Extract images from Reddit
                     if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
                         image_urls.append(post_data['url_overridden_by_dest'])
                     
@@ -257,25 +202,18 @@ def extract_content_from_url(url):
             except Exception as e:
                 print(f"Reddit extraction failed: {e}")
         
-        # Generic URL handler (for other sites)
+        # Generic URL handler
         else:
             try:
-                enhanced_headers = {
-                    **DEFAULT_HEADERS,
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                }
-                
-                r = requests.get(url, headers=enhanced_headers, timeout=15, allow_redirects=True)
+                r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15, allow_redirects=True)
                 r.raise_for_status()
                 html = r.text
                 
-                # Extract text content
                 doc = Document(html)
                 text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
                 if len(text_content) < 150:
                     text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
                 
-                # Extract images
                 soup = BeautifulSoup(html, 'lxml')
                 for prop in ['og:image', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']:
                     meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
@@ -302,27 +240,14 @@ def extract_content_from_url(url):
         print(f"Overall extraction failed: {e}")
         return {"text": f"Extraction failed: {e}", "image_urls": []}
     
-    # Final validation - reject obviously wrong content
+    # Clean up text - remove common Twitter artifacts
     if text_content:
-        # Filter out common error messages that shouldn't be fact-checked
-        error_phrases = [
-            'something went wrong',
-            'try again',
-            'privacy related extensions',
-            'please disable them',
-            'rate limit exceeded',
-            'this tweet is unavailable',
-            'tweet not found'
-        ]
+        text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
+        text_content = re.sub(r'https://t\.co/\w+', '', text_content)
+        text_content = ' '.join(text_content.split()).strip()
         
-        if any(phrase in text_content.lower() for phrase in error_phrases):
-            print(f"Detected error content, rejecting: {text_content[:100]}...")
-            text_content = "Unable to extract tweet content - may be private or deleted"
-    
-    # Clean up text
-    text_content = ' '.join(text_content.split())
-    if len(text_content) > 12000:
-        text_content = text_content[:12000] + '…'
+        if len(text_content) > 12000:
+            text_content = text_content[:12000] + '…'
     
     # Deduplicate images
     unique_images = []
@@ -334,16 +259,17 @@ def extract_content_from_url(url):
     
     final_images = sorted(unique_images, key=lambda x: (
         0 if 'pbs.twimg.com' in x else
-        1 if 'pic.twitter.com' in x else
-        2 if any(host in x for host in ['i.redd.it', 'i.imgur.com']) else 3
+        1 if 'pic.twitter.com' in x else 2
     ))[:5]
     
-    print(f"Final extraction result:")
-    print(f"  Text: {text_content[:200]}...")
+    print(f"FINAL EXTRACTION RESULT:")
+    print(f"  Text: '{text_content[:100]}{'...' if len(text_content) > 100 else ''}' (length: {len(text_content)})")
     print(f"  Images: {len(final_images)}")
+    for i, img in enumerate(final_images):
+        print(f"    {i+1}: {img}")
     
     return {
-        "text": text_content or "No text content found.",
+        "text": text_content or "",
         "image_urls": final_images
     }
 
@@ -358,17 +284,17 @@ def fact_check_text(text):
     }
     
     prompt = f"""
-You are a fact-checking assistant. Analyze the following text and fact-check any factual claims.
+Analyze this text for factual claims that can be verified:
 
-TEXT TO ANALYZE: {text}
+TEXT: {text}
 
-RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
+Return ONLY a JSON object:
 
 {{
   "verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",
-  "confidence": 75,
-  "explanation": "Your explanation here",
-  "sources": ["https://example.com/source1"]
+  "confidence": 85,
+  "explanation": "Your analysis here",
+  "sources": ["https://example.com"]
 }}
 
 CRITICAL: Return ONLY the JSON object, no other text.
@@ -391,20 +317,17 @@ CRITICAL: Return ONLY the JSON object, no other text.
             content = result['choices'][0]['message']['content']
             
             try:
-                # Clean the content
                 clean_content = content.strip()
                 if clean_content.startswith('json'):
                     clean_content = clean_content[4:].strip()
                 
                 parsed = json.loads(clean_content)
                 
-                fact_check_result = {
-                    "claim": text[:200] + "..." if len(text) > 200 else text,
-                    "result": parsed
-                }
-                
                 return {
-                    "fact_check_results": [fact_check_result],
+                    "fact_check_results": [{
+                        "claim": text[:200] + "..." if len(text) > 200 else text,
+                        "result": parsed
+                    }],
                     "original_text": text,
                     "claims_found": 1,
                     "timestamp": time.time()
@@ -412,26 +335,16 @@ CRITICAL: Return ONLY the JSON object, no other text.
                 
             except json.JSONDecodeError:
                 # Fallback parsing
-                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
-                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
-                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                
-                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
-                confidence = int(confidence_match.group(1)) if confidence_match else 75
-                explanation = explanation_match.group(1) if explanation_match else content
-                
-                fact_check_result = {
-                    "claim": text[:200] + "..." if len(text) > 200 else text,
-                    "result": {
-                        "verdict": verdict,
-                        "confidence": confidence,
-                        "explanation": explanation,
-                        "sources": ["Perplexity Analysis"]
-                    }
-                }
-                
                 return {
-                    "fact_check_results": [fact_check_result],
+                    "fact_check_results": [{
+                        "claim": text[:200] + "..." if len(text) > 200 else text,
+                        "result": {
+                            "verdict": "INSUFFICIENT EVIDENCE",
+                            "confidence": 75,
+                            "explanation": content,
+                            "sources": ["Perplexity Analysis"]
+                        }
+                    }],
                     "original_text": text,
                     "claims_found": 1,
                     "timestamp": time.time()
@@ -443,7 +356,7 @@ CRITICAL: Return ONLY the JSON object, no other text.
         return {"error": f"Request failed: {str(e)}"}, 500
 
 def fact_check_image(image_data_url, image_url):
-    """Fact-check image content using Perplexity vision"""
+    """ENHANCED: Fact-check image content with better prompting"""
     if not PERPLEXITY_API_KEY:
         return {"error": "API key not configured"}, 500
     
@@ -460,9 +373,17 @@ def fact_check_image(image_data_url, image_url):
                     {
                         "type": "text", 
                         "text": (
-                            "Analyze this image for factual claims. Look for text, charts, graphs, statistics, or any verifiable information. "
-                            "Return ONLY a JSON object: "
-                            '{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 75, "explanation": "Your analysis", "sources": ["url1"]}'
+                            "ANALYZE THIS IMAGE FOR FACTUAL CLAIMS:\n\n"
+                            "1. Read ALL visible text in the image carefully\n"
+                            "2. Identify any quotes, statements, statistics, or claims\n"
+                            "3. Note any person names, titles, dates, or attributions\n"
+                            "4. Look for charts, graphs, or data visualizations\n"
+                            "5. Fact-check ANY verifiable claims you find\n\n"
+                            "If you find factual claims, verify them thoroughly.\n"
+                            "If it's purely decorative/artistic with no factual content, say so.\n\n"
+                            "Return ONLY this JSON format:\n"
+                            '{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 85, "explanation": "Your detailed analysis of what you see and any fact-checking", "sources": ["url1"]}\n\n'
+                            "CRITICAL: Return ONLY the JSON object."
                         )
                     }
                 ]
@@ -475,21 +396,24 @@ def fact_check_image(image_data_url, image_url):
         elif image_url:
             messages[0]["content"].append({"type": "image_url", "image_url": image_url})
         
+        print(f"Sending image analysis request for: {image_url or 'uploaded image'}")
+        
         payload = {
             "model": "sonar-pro",
             "messages": messages,
-            "max_tokens": 600
+            "max_tokens": 800
         }
         
-        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
+        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=45)
         
         if sonar_resp.status_code != 200:
+            print(f"Image analysis API failed with status: {sonar_resp.status_code}")
             return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
         
         content = sonar_resp.json()['choices'][0]['message']['content']
+        print(f"Image analysis response: {content[:200]}...")
         
         try:
-            # Clean and parse JSON
             clean_content = content.strip()
             if clean_content.startswith('json'):
                 clean_content = clean_content[4:].strip()
@@ -511,63 +435,58 @@ def fact_check_image(image_data_url, image_url):
                 "source_url": image_url if image_url else None
             }
             
+            print(f"Image analysis successful: {parsed.get('verdict')} ({parsed.get('confidence')}%)")
             return result, 200
         
         except json.JSONDecodeError:
+            print(f"Failed to parse JSON, using fallback")
             # Fallback for non-JSON responses
             if "no factual claims" in content.lower():
-                return {
-                    "fact_check_results": [{
-                        "claim": "Image Analysis",
-                        "result": {
-                            "verdict": "NO FACTUAL CLAIMS",
-                            "confidence": 100,
-                            "explanation": "This image does not contain verifiable factual claims.",
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 0,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
+                verdict = "NO FACTUAL CLAIMS"
+                explanation = "This image does not contain verifiable factual claims."
             else:
-                return {
-                    "fact_check_results": [{
-                        "claim": "Image Analysis",
-                        "result": {
-                            "verdict": "INSUFFICIENT EVIDENCE",
-                            "confidence": 75,
-                            "explanation": content,
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 1,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
+                verdict = "INSUFFICIENT EVIDENCE"
+                explanation = content
+            
+            return {
+                "fact_check_results": [{
+                    "claim": "Image Analysis",
+                    "result": {
+                        "verdict": verdict,
+                        "confidence": 75,
+                        "explanation": explanation,
+                        "sources": []
+                    }
+                }],
+                "claims_found": 1 if verdict != "NO FACTUAL CLAIMS" else 0,
+                "timestamp": time.time(),
+                "source_url": image_url if image_url else None
+            }, 200
     
     except Exception as e:
+        print(f"Image analysis exception: {e}")
         return {"error": f"Image analysis failed: {str(e)}"}, 500
 
 def fact_check_url_with_images(url):
-    """Extract and fact-check both text and images from URLs"""
+    """MAIN FUNCTION: Extract and fact-check both text and images"""
     try:
-        print(f"Starting fact-check for URL: {url}")
+        print(f"\n=== STARTING FACT-CHECK FOR: {url} ===")
         
         # Extract content
         content = extract_content_from_url(url)
-        text = content.get("text", "")
+        text = content.get("text", "").strip()
         image_urls = content.get("image_urls", [])
         
-        print(f"Extracted text length: {len(text)}")
-        print(f"Extracted {len(image_urls)} images")
+        print(f"\nCONTENT EXTRACTION SUMMARY:")
+        print(f"  Text extracted: {len(text)} characters")
+        print(f"  Images found: {len(image_urls)}")
         
         all_results = []
         
         # Fact-check text if meaningful content exists
-        if text and len(text.strip()) > 20:
+        if text and len(text) > 10:
             try:
-                print("Starting text fact-check...")
+                print(f"\n--- ANALYZING TEXT ---")
                 text_result, status_code = fact_check_text(text)
                 if status_code == 200 and isinstance(text_result, dict):
                     text_fact_checks = text_result.get('fact_check_results', [])
@@ -577,12 +496,14 @@ def fact_check_url_with_images(url):
                     print(f"Text analysis completed: {len(text_fact_checks)} claims")
             except Exception as e:
                 print(f"Text fact-checking failed: {e}")
+        else:
+            print("No meaningful text content to analyze")
         
-        # Fact-check each image individually
+        # CRITICAL: Fact-check each image individually
         image_analysis_results = []
-        for i, img_url in enumerate(image_urls[:3]):  # Limit to first 3 images
+        for i, img_url in enumerate(image_urls):
             try:
-                print(f"Starting fact-check for image {i+1}: {img_url}")
+                print(f"\n--- ANALYZING IMAGE {i+1}: {img_url} ---")
                 img_result, status_code = fact_check_image("", img_url)
                 
                 if status_code == 200 and isinstance(img_result, dict):
@@ -594,19 +515,18 @@ def fact_check_url_with_images(url):
                         "fact_check_results": img_fact_checks
                     }
                     
-                    if img_fact_checks:
-                        image_analysis_results.append(image_result_summary)
-                        
-                        # Add to combined results for frontend
-                        for fact_check in img_fact_checks:
-                            fact_check_copy = fact_check.copy()
-                            fact_check_copy['source_type'] = 'image'
-                            fact_check_copy['image_url'] = img_url
-                            all_results.append(fact_check_copy)
-                        
-                        print(f"Image {i+1} analysis completed: {len(img_fact_checks)} claims")
-                    else:
-                        print(f"Image {i+1}: No factual claims found")
+                    image_analysis_results.append(image_result_summary)
+                    
+                    # Add to combined results for frontend
+                    for fact_check in img_fact_checks:
+                        fact_check_copy = fact_check.copy()
+                        fact_check_copy['source_type'] = 'image'
+                        fact_check_copy['image_url'] = img_url
+                        all_results.append(fact_check_copy)
+                    
+                    print(f"Image {i+1} analysis completed: {len(img_fact_checks)} claims found")
+                else:
+                    print(f"Image {i+1} analysis failed with status: {status_code}")
                         
             except Exception as e:
                 print(f"Image {i+1} fact-checking failed: {e}")
@@ -618,10 +538,11 @@ def fact_check_url_with_images(url):
                 }
                 image_analysis_results.append(error_result)
         
-        # Get platform name
         platform = get_platform_name(url)
         
-        print(f"Final results: {len(all_results)} total claims found")
+        print(f"\n=== FINAL RESULTS SUMMARY ===")
+        print(f"Total claims found: {len(all_results)}")
+        print(f"Images processed: {len(image_analysis_results)}")
         
         return {
             "original_text": text,
@@ -665,8 +586,6 @@ class handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
             self.end_headers()
             self.wfile.write(json.dumps(response_data).encode())
         else:
@@ -714,18 +633,14 @@ class handler(BaseHTTPRequestHandler):
             image_url = data.get('image_url', '')
             
             if not image_data_url and not image_url:
-                response_data = {"error": "No image data URL or image URL provided"}
+                response_data = {"error": "No image provided"}
                 status_code = 400
             else:
-                if image_data_url and len(image_data_url) > 10 * 1024 * 1024:
-                    response_data = {"error": "Image data URL is too large. Please use a smaller image."}
-                    status_code = 400
-                else:
-                    try:
-                        response_data, status_code = fact_check_image(image_data_url, image_url)
-                    except Exception as e:
-                        response_data = {"error": f"Image analysis failed: {str(e)}"}
-                        status_code = 400
+                try:
+                    response_data, status_code = fact_check_image(image_data_url, image_url)
+                except Exception as e:
+                    response_data = {"error": f"Image analysis failed: {str(e)}"}
+                    status_code = 500
         else:
             response_data = {"error": "Endpoint not found"}
             status_code = 404
@@ -735,7 +650,6 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.send_header('Access-Control-Max-Age', '86400')
         self.end_headers()
         self.wfile.write(json.dumps(response_data).encode())
     

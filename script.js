@@ -214,101 +214,117 @@ class FactCheckerApp {
         this.factCheckBtn.innerHTML = '<i class="fas fa-search"></i> Fact Check';
     }
 
-    renderResults(data) {
-        console.log('Rendering results:', data);
-        
-        this.resultsContainer.innerHTML = '';
+    // In your script.js, replace the renderResults function with this enhanced version:
 
-        if (!data.fact_check_results || data.fact_check_results.length === 0) {
-            this.resultsContainer.innerHTML = '<p class="no-results">No factual claims found to verify.</p>';
-        } else {
-            // Add source info if from URL
-            if (data.source_url) {
-                const sourceDiv = document.createElement('div');
-                sourceDiv.className = 'source-banner';
-                const imagesText = data.images_processed > 0 ? ` • ${data.images_processed} image${data.images_processed > 1 ? 's' : ''} analyzed` : '';
-                sourceDiv.innerHTML = `
-                    <i class="fas fa-link"></i>
-                    <span>Source: <a href="${data.source_url}" target="_blank" rel="noopener">${data.platform || 'External'}</a>${imagesText}</span>
-                `;
-                this.resultsContainer.appendChild(sourceDiv);
-            }
+renderResults(data) {
+    console.log('Rendering results:', data);
+    
+    this.resultsContainer.innerHTML = '';
 
-            // Group results by source type
-            const textResults = data.fact_check_results.filter(r => r.source_type === 'text' || !r.source_type);
-            const imageResults = data.fact_check_results.filter(r => r.source_type === 'image');
+    // Handle error cases
+    if (data.error) {
+        this.showError(data.error);
+        return;
+    }
 
-            // Render text results
-            if (textResults.length > 0) {
-                if (imageResults.length > 0) {
-                    const textHeader = document.createElement('h3');
-                    textHeader.textContent = 'Text Analysis';
-                    textHeader.className = 'analysis-section-header';
-                    textHeader.style.cssText = 'margin: 20px 0 15px 0; color: var(--text); font-size: 1.2em; border-bottom: 2px solid var(--accent); padding-bottom: 8px;';
-                    this.resultsContainer.appendChild(textHeader);
-                }
-
-                textResults.forEach((result, index) => {
-                    const claimElement = this.createClaimElement(result, index + 1, 'text');
-                    this.resultsContainer.appendChild(claimElement);
-                });
-            }
-
-            // Render image results
-            if (imageResults.length > 0) {
-                const imageHeader = document.createElement('h3');
-                imageHeader.textContent = 'Image Analysis';
-                imageHeader.className = 'analysis-section-header';
-                imageHeader.style.cssText = 'margin: 20px 0 15px 0; color: var(--text); font-size: 1.2em; border-bottom: 2px solid var(--accent-2); padding-bottom: 8px;';
-                this.resultsContainer.appendChild(imageHeader);
-
-                // Group image results by image URL to avoid duplicates
-                const imageGroups = {};
-                imageResults.forEach(result => {
-                    const imgUrl = result.image_url || 'unknown';
-                    if (!imageGroups[imgUrl]) {
-                        imageGroups[imgUrl] = [];
-                    }
-                    imageGroups[imgUrl].push(result);
-                });
-
-                Object.entries(imageGroups).forEach(([imgUrl, results], groupIndex) => {
-                    // Add image preview container
-                    if (imgUrl !== 'unknown') {
-                        const imgContainer = document.createElement('div');
-                        imgContainer.className = 'image-analysis-container';
-                        imgContainer.style.cssText = 'margin-bottom: 20px; padding: 15px; background: var(--elev); border-radius: 12px; border: 1px solid var(--border);';
-                        
-                        const imgPreview = document.createElement('div');
-                        imgPreview.className = 'image-source-preview';
-                        imgPreview.style.cssText = 'margin-bottom: 15px; text-align: center;';
-                        imgPreview.innerHTML = `
-                            <img src="${imgUrl}" alt="Analyzed image" style="max-width: 300px; max-height: 200px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-                            <p style="margin-top: 8px; color: var(--muted); font-size: 0.9em;">Image ${groupIndex + 1}</p>
-                        `;
-                        imgContainer.appendChild(imgPreview);
-                        
-                        // Add claims for this image
-                        results.forEach((result, index) => {
-                            const claimElement = this.createClaimElement(result, index + 1, 'image');
-                            imgContainer.appendChild(claimElement);
-                        });
-                        
-                        this.resultsContainer.appendChild(imgContainer);
-                    } else {
-                        // Handle results without image URL
-                        results.forEach((result, index) => {
-                            const claimElement = this.createClaimElement(result, index + 1, 'image');
-                            this.resultsContainer.appendChild(claimElement);
-                        });
-                    }
-                });
-            }
+    if (!data.fact_check_results || data.fact_check_results.length === 0) {
+        this.resultsContainer.innerHTML = '<p class="no-results">No factual claims found to verify.</p>';
+    } else {
+        // Add source info if from URL
+        if (data.source_url) {
+            const sourceDiv = document.createElement('div');
+            sourceDiv.className = 'source-banner';
+            const imagesText = data.images_processed > 0 ? ` • ${data.images_processed} image${data.images_processed > 1 ? 's' : ''} analyzed` : '';
+            sourceDiv.innerHTML = `
+                <i class="fas fa-link"></i>
+                <span>Source: <a href="${data.source_url}" target="_blank" rel="noopener">${data.platform || 'External'}</a>${imagesText}</span>
+            `;
+            this.resultsContainer.appendChild(sourceDiv);
         }
 
-        this.resultsSection.classList.remove('hidden');
-        this.resultsSection.scrollIntoView({ behavior: 'smooth' });
+        // Group results by source type
+        const textResults = data.fact_check_results.filter(r => r.source_type === 'text' || !r.source_type);
+        const imageResults = data.fact_check_results.filter(r => r.source_type === 'image');
+
+        // Render text results
+        if (textResults.length > 0) {
+            if (imageResults.length > 0) {
+                const textHeader = document.createElement('h3');
+                textHeader.textContent = 'Text Analysis';
+                textHeader.className = 'analysis-section-header';
+                textHeader.style.cssText = 'margin: 20px 0 15px 0; color: var(--text); font-size: 1.2em; border-bottom: 2px solid var(--accent); padding-bottom: 8px;';
+                this.resultsContainer.appendChild(textHeader);
+            }
+
+            textResults.forEach((result, index) => {
+                const claimElement = this.createClaimElement(result, index + 1, 'text');
+                this.resultsContainer.appendChild(claimElement);
+            });
+        }
+
+        // Render image results - ENHANCED ERROR HANDLING
+        if (imageResults.length > 0) {
+            const imageHeader = document.createElement('h3');
+            imageHeader.textContent = 'Image Analysis';
+            imageHeader.className = 'analysis-section-header';
+            imageHeader.style.cssText = 'margin: 20px 0 15px 0; color: var(--text); font-size: 1.2em; border-bottom: 2px solid var(--accent-2); padding-bottom: 8px;';
+            this.resultsContainer.appendChild(imageHeader);
+
+            // Group image results by image URL
+            const imageGroups = {};
+            imageResults.forEach(result => {
+                const imgUrl = result.image_url || 'unknown';
+                if (!imageGroups[imgUrl]) {
+                    imageGroups[imgUrl] = [];
+                }
+                imageGroups[imgUrl].push(result);
+            });
+
+            Object.entries(imageGroups).forEach(([imgUrl, results], groupIndex) => {
+                // Add image preview container
+                if (imgUrl !== 'unknown') {
+                    const imgContainer = document.createElement('div');
+                    imgContainer.className = 'image-analysis-container';
+                    imgContainer.style.cssText = 'margin-bottom: 20px; padding: 15px; background: var(--elev); border-radius: 12px; border: 1px solid var(--border);';
+                    
+                    const imgPreview = document.createElement('div');
+                    imgPreview.className = 'image-source-preview';
+                    imgPreview.style.cssText = 'margin-bottom: 15px; text-align: center;';
+                    
+                    // Enhanced image loading with error handling
+                    imgPreview.innerHTML = `
+                        <img src="${imgUrl}" alt="Analyzed image" 
+                             style="max-width: 300px; max-height: 200px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                        <div style="display: none; padding: 20px; background: var(--card); border-radius: 8px; color: var(--muted);">
+                            <i class="fas fa-image" style="font-size: 24px; margin-bottom: 8px;"></i>
+                            <p>Image could not be loaded</p>
+                        </div>
+                        <p style="margin-top: 8px; color: var(--muted); font-size: 0.9em;">Image ${groupIndex + 1}</p>
+                    `;
+                    imgContainer.appendChild(imgPreview);
+                    
+                    // Add claims for this image
+                    results.forEach((result, index) => {
+                        const claimElement = this.createClaimElement(result, index + 1, 'image');
+                        imgContainer.appendChild(claimElement);
+                    });
+                    
+                    this.resultsContainer.appendChild(imgContainer);
+                } else {
+                    // Handle results without image URL
+                    results.forEach((result, index) => {
+                        const claimElement = this.createClaimElement(result, index + 1, 'image');
+                        this.resultsContainer.appendChild(claimElement);
+                    });
+                }
+            });
+        }
     }
+
+    this.resultsSection.classList.remove('hidden');
+    this.resultsSection.scrollIntoView({ behavior: 'smooth' });
+}
 
     createClaimElement(result, index, sourceType = 'text') {
         const div = document.createElement('div');
