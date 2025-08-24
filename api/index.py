@@ -6,13 +6,14 @@ import time
 import re
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+from readability import Document
 
 # Perplexity API configuration
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
 def extract_text_from_url(url):
-    """Extract text content from a URL"""
+    """Extract text content from a URL with robust social media handling"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -25,43 +26,46 @@ def extract_text_from_url(url):
     
     try:
         parsed_url = urlparse(url)
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            # Domain-specific and universal fallbacks before failing
-            if parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
-                try:
-                    json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
-                    rj_headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                        "Accept": "application/json"
-                    }
-                    rj = requests.get(json_url, headers=rj_headers, timeout=12)
-                    if rj.status_code == 200:
-                        data = rj.json()
-                        # Standard post JSON: [post, comments]
-                        try:
-                            post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
-                            title = post.get("title", "")
-                            selftext = post.get("selftext", "") or post.get("body", "")
-                            text = f"{title}. {selftext}".strip()
-                            if len(text) > 30:
-                                return text
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-            # Jina Reader fallback for any domain
-            try:
-                q = f"?{parsed_url.query}" if parsed_url.query else ""
-                wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
-                jr = requests.get(wrapped, headers=headers, timeout=18)
-                if jr.status_code == 200 and len(jr.text.strip()) > 50:
-                    return re.sub(r'\s+', ' ', jr.text).strip()
-            except Exception:
-                pass
-            raise ValueError(f"Failed to fetch URL (status {response.status_code})")
         
-        # Special handling for Twitter/X using syndication endpoint (WORKING METHOD)
+        # Special handling for Reddit - try JSON API first
+        if parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
+            try:
+                # Convert to JSON URL
+                json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+                rj_headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "application/json"
+                }
+                rj = requests.get(json_url, headers=rj_headers, timeout=15)
+                if rj.status_code == 200:
+                    data = rj.json()
+                    # Standard post JSON: [post, comments]
+                    try:
+                        post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
+                        title = post.get("title", "")
+                        selftext = post.get("selftext", "") or post.get("body", "")
+                        text = f"{title}. {selftext}".strip()
+                        if len(text) > 30:
+                            return text
+                    except Exception as e:
+                        # If JSON parsing fails, try to extract from the raw JSON
+                        if isinstance(data, dict) and "data" in data:
+                            try:
+                                children = data["data"].get("children", [])
+                                if children and isinstance(children[0], dict) and "data" in children[0]:
+                                    post_data = children[0]["data"]
+                                    title = post_data.get("title", "")
+                                    selftext = post_data.get("selftext", "") or post_data.get("body", "")
+                                    text = f"{title}. {selftext}".strip()
+                                    if len(text) > 30:
+                                        return text
+                            except Exception:
+                                pass
+            except Exception as e:
+                # JSON approach failed, continue to HTML approach
+                pass
+        
+        # Special handling for Twitter/X using syndication endpoint
         if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com", "m.twitter.com"} and "/status/" in parsed_url.path:
             m = re.search(r"/status/(\d+)", parsed_url.path)
             if m:
@@ -100,144 +104,54 @@ def extract_text_from_url(url):
                                 return text
                 except Exception:
                     pass
+        
+        # Try direct HTML request
+        try:
+            response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                # Parse HTML content
+                html = response.text
                 
-                # Fallback: Try mobile Twitter URL
+                # Use readability for better content extraction
                 try:
-                    mobile_url = f"https://mobile.twitter.com/i/status/{tweet_id}"
-                    mobile_response = requests.get(mobile_url, headers=headers, timeout=12)
-                    if mobile_response.status_code == 200:
-                        mobile_content = mobile_response.text
-                        
-                        # Look for tweet text in mobile version
-                        tweet_patterns = [
-                            r'<div[^>]*data-testid="tweetText"[^>]*>(.*?)</div>',
-                            r'<div[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</div>',
-                            r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
-                            r'<p[^>]*class="[^"]*tweet-text[^"]*"[^>]*>(.*?)</p>',
-                            r'<meta[^>]*name="description"[^>]*content="([^"]*)"',
-                            r'<meta[^>]*property="og:description"[^>]*content="([^"]*)"'
-                        ]
-                        
-                        for pattern in tweet_patterns:
-                            match = re.search(pattern, mobile_content, re.DOTALL | re.IGNORECASE)
-                            if match:
-                                tweet_text = re.sub(r'<[^>]+>', '', match.group(1)).strip()
-                                tweet_text = re.sub(r'&[a-zA-Z]+;', ' ', tweet_text)
-                                tweet_text = re.sub(r'\s+', ' ', tweet_text).strip()
-                                if tweet_text and len(tweet_text) > 20:
-                                    return tweet_text
-                except Exception:
-                    pass
-        
-        # General text extraction for other sites - COMPLETELY REWRITTEN
-        text = response.text
-        
-        # STEP 1: Remove ALL script, style, and non-content HTML elements
-        text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<nav[^>]*>.*?</nav>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<header[^>]*>.*?</header>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<footer[^>]*>.*?</footer>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<aside[^>]*>.*?</aside>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<form[^>]*>.*?</form>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<button[^>]*>.*?</button>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<input[^>]*>', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'<select[^>]*>.*?</select>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<textarea[^>]*>.*?</textarea>', '', text, flags=re.DOTALL | re.IGNORECASE)
-        
-        # STEP 2: Remove ALL CSS and JS patterns BEFORE HTML tag removal
-        text = re.sub(r'\{[^}]*\}', '', text)  # Remove ALL CSS blocks
-        text = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', text)  # Remove ALL CSS properties
-        text = re.sub(r'#[a-zA-Z0-9_-]+', '', text)  # Remove CSS IDs
-        text = re.sub(r'\.[a-zA-Z0-9_-]+', '', text)  # Remove CSS classes
-        text = re.sub(r'function\s*\([^)]*\)\s*\{[^}]*\}', '', text)  # Remove JS functions
-        text = re.sub(r'(var|const|let)\s+[^;]+;', '', text)  # Remove JS declarations
-        text = re.sub(r'[a-zA-Z0-9_-]+\s*=\s*[^;]+;', '', text)  # Remove JS assignments
-        text = re.sub(r'import\s+[^;]+;', '', text)  # Remove JS imports
-        text = re.sub(r'export\s+[^;]+;', '', text)  # Remove JS exports
-        
-        # STEP 3: Remove remaining HTML tags
-        text = re.sub(r'<[^>]+>', ' ', text)
-        
-        # STEP 4: Clean up whitespace and normalize
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # STEP 5: Split into lines and filter out ANY line that looks like code
-        lines = text.split('\n')
-        filtered_lines = []
-        for line in lines:
-            line = line.strip()
-            # Only keep lines that look like human-readable text
-            if (line and len(line) > 15 and
-                line.count(' ') > 2 and  # Must have multiple words
-                not re.search(r'[{}:;]', line) and  # No CSS/JS characters
-                not re.search(r'function|var|const|let|import|export', line, re.IGNORECASE) and  # No JS keywords
-                not re.search(r'background|color|border|margin|padding|font|display|position|width|height', line, re.IGNORECASE) and  # No CSS properties
-                not re.match(r'^[.#][a-zA-Z0-9_-]', line) and  # No CSS selectors
-                not re.match(r'^[a-zA-Z0-9_-]+\s*[=:]', line) and  # No assignments or properties
-                not re.match(r'^[{}]$', line) and  # No just braces
-                not re.match(r'^[a-zA-Z0-9_-]+\s*\(', line) and  # No function calls
-                line.count('a') + line.count('e') + line.count('i') + line.count('o') + line.count('u') > 3):  # Must have vowels (human text)
-                filtered_lines.append(line)
-        
-        text = ' '.join(filtered_lines)
-        
-        # STEP 6: If we still have CSS/JS artifacts, do final cleanup
-        text = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;?', '', text)  # Remove any remaining CSS properties
-        text = re.sub(r'\{[^}]*\}', '', text)  # Remove any remaining blocks
-        text = re.sub(r'[a-zA-Z0-9_-]+\s*=\s*[^;]+;?', '', text)  # Remove any remaining assignments
-        
-        # STEP 7: Final cleanup
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # STEP 8: If we still don't have good content, try a different approach
-        if len(text.strip()) < 30:
-            # Look for any text that looks like actual content
-            original_text = response.text
-            # Try to find text in specific content areas
-            content_patterns = [
-                r'<main[^>]*>(.*?)</main>',
-                r'<article[^>]*>(.*?)</article>',
-                r'<section[^>]*>(.*?)</section>',
-                r'<div[^>]*class="[^"]*content[^"]*"[^>]*>(.*?)</div>',
-                r'<div[^>]*class="[^"]*text[^"]*"[^>]*>(.*?)</div>',
-                r'<p[^>]*>(.*?)</p>'
-            ]
-            
-            for pattern in content_patterns:
-                matches = re.findall(pattern, original_text, re.DOTALL | re.IGNORECASE)
-                for match in matches:
-                    # Clean this specific content
-                    clean_match = re.sub(r'<[^>]+>', ' ', match)
-                    clean_match = re.sub(r'\{[^}]*\}', '', clean_match)
-                    clean_match = re.sub(r'[a-zA-Z-]+\s*:\s*[^;]+;', '', clean_match)
-                    clean_match = re.sub(r'\s+', ' ', clean_match).strip()
+                    doc = Document(html)
+                    title = doc.short_title()
+                    summary_html = doc.summary()
+                    soup = BeautifulSoup(summary_html, "lxml")
+                    main_text = soup.get_text(separator=" ", strip=True)
                     
-                    if len(clean_match) > 30 and clean_match.count(' ') > 5:
-                        text = clean_match
-                        break
-                if len(text) > 30:
-                    break
+                    # If readability extraction is too short, try fallback
+                    if len(main_text) < 100:
+                        # Fallback to full page extraction
+                        full_soup = BeautifulSoup(html, "lxml")
+                        main_text = full_soup.get_text(separator=" ", strip=True)
+                except Exception:
+                    # If readability fails, use direct BeautifulSoup
+                    soup = BeautifulSoup(html, "lxml")
+                    main_text = soup.get_text(separator=" ", strip=True)
+                
+                # Clean up the text
+                main_text = re.sub(r'\s+', ' ', main_text).strip()
+                
+                if len(main_text) > 50:
+                    return main_text
+                    
+        except Exception as e:
+            # HTML approach failed
+            pass
         
-        # Try Jina Reader as last resort if content seems blocked/too short
-        if len(text) < 100 or 'enable javascript' in response.text.lower() or 'cookies' in response.text.lower():
-            try:
-                q = f"?{parsed_url.query}" if parsed_url.query else ""
-                wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
-                jr = requests.get(wrapped, headers=headers, timeout=18)
-                if jr.status_code == 200 and len(jr.text.strip()) > 50:
-                    text = re.sub(r'\s+', ' ', jr.text).strip()
-            except Exception:
-                pass
+        # Final fallback: Try Jina Reader proxy
+        try:
+            q = f"?{parsed_url.query}" if parsed_url.query else ""
+            wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
+            jr = requests.get(wrapped, headers=headers, timeout=18)
+            if jr.status_code == 200 and len(jr.text.strip()) > 50:
+                return re.sub(r'\s+', ' ', jr.text).strip()
+        except Exception as e:
+            pass
         
-        # Limit length
-        if len(text) > 8000:
-            text = text[:8000] + "…"
-        
-        if not text or len(text) < 20:  # Reduced minimum length requirement
-            raise ValueError("Could not extract meaningful text from the provided URL")
-        
-        return text
+        # If all methods fail, raise an error
+        raise ValueError(f"Failed to extract content from URL after trying multiple methods")
         
     except Exception as e:
         raise ValueError(f"Error extracting content: {str(e)}")
