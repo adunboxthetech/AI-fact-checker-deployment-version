@@ -819,83 +819,206 @@ def fact_check_image(image_data_url, image_url):
         return {"error": f"Image analysis failed: {str(e)}"}, 500
 
 def fact_check_url_with_images(url):
-    """Fact-check both text and images from a URL"""
+    """Fact-check both text and images from a URL using multimodal analysis"""
     try:
         # Extract both text and images from URL
         content = extract_content_from_url(url)
         text = content["text"]
         image_urls = content["image_urls"]
         
-        results = []
+        # If we have images, use multimodal analysis
+        if image_urls and len(image_urls) > 0:
+            # Use the first image for multimodal analysis
+            primary_image_url = image_urls[0]
+            
+            # Create a comprehensive prompt that includes both text and image context
+            multimodal_prompt = f"""
+            You are a comprehensive fact-checking expert. Analyze this social media post which contains both text and visual content.
+            
+            TEXT CONTENT: {text}
+            
+            VISUAL CONTENT: This post also contains an image that may contain additional factual claims, charts, graphs, screenshots, or visual information.
+            
+            TASK: Perform a thorough fact-check analysis considering both the text content and any factual claims visible in the image. Look for:
+            - Claims in the text
+            - Claims visible in the image (charts, graphs, text in images, screenshots, etc.)
+            - Statistics, data, or numbers shown visually
+            - Dates, names, or other factual information in the image
+            - Any discrepancies between text and visual content
+            
+            RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
+            {{
+                "verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",
+                "confidence": 0-100,
+                "explanation": "Your comprehensive analysis covering both text and visual content",
+                "sources": ["url1", "url2"],
+                "text_claims": ["claim1", "claim2"],
+                "visual_claims": ["visual_claim1", "visual_claim2"]
+            }}
+            
+            CRITICAL: Return ONLY the JSON object, no other text. Analyze both text and visual content comprehensively.
+            """
+            
+            # Use multimodal analysis with the image
+            try:
+                image_result = fact_check_image_multimodal("", primary_image_url, multimodal_prompt)
+                if isinstance(image_result, tuple):
+                    image_data, image_status = image_result
+                    if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
+                        # Update the claim to reflect multimodal analysis
+                        for result in image_data['fact_check_results']:
+                            result['claim'] = f"Multimodal Analysis: Text + Image from {get_platform_name(url)}"
+                        return image_data, 200
+            except Exception as e:
+                # If multimodal analysis fails, fall back to text-only analysis
+                pass
         
-        # First, fact-check the text content
-        if text and len(text.strip()) > 5:  # Reduced minimum length for tweets
+        # Fallback to text-only analysis if no images or multimodal analysis fails
+        if text and len(text.strip()) > 5:
             text_result = fact_check_text(text)
             if isinstance(text_result, tuple):
                 text_data, text_status = text_result
                 if text_status == 200 and isinstance(text_data, dict) and 'fact_check_results' in text_data:
-                    results.extend(text_data['fact_check_results'])
+                    # Add information about detected images if any
+                    if image_urls:
+                        for result in text_data['fact_check_results']:
+                            result['claim'] = f"Text Analysis (with {len(image_urls)} image(s) detected): {result.get('claim', 'Content Analysis')}"
+                    return text_data, 200
         
-        # Then, fact-check each image
-        for i, image_url in enumerate(image_urls[:3]):  # Limit to first 3 images
-            try:
-                image_result = fact_check_image("", image_url)
-                if isinstance(image_result, tuple):
-                    image_data, image_status = image_result
-                    if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
-                        # Update claim to indicate it's from an image
-                        for result in image_data['fact_check_results']:
-                            result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
-                        results.extend(image_data['fact_check_results'])
-                    else:
-                        # Image analysis failed, add a note about the detected image
-                        platform_name = get_platform_name(image_url)
-                        results.append({
-                            "claim": f"Image {i+1} detected in {platform_name}",
-                            "result": {
-                                "verdict": "IMAGE DETECTED",
-                                "confidence": 100,
-                                "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
-                                "sources": []
-                            },
-                            "status": "ANALYSIS COMPLETE"
-                        })
-            except Exception as e:
-                # If image analysis fails, add a note about the detected image
-                platform_name = get_platform_name(image_url)
-                results.append({
-                    "claim": f"Image {i+1} detected in {platform_name}",
-                    "result": {
-                        "verdict": "IMAGE DETECTED",
-                        "confidence": 100,
-                        "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
-                        "sources": []
-                    },
-                    "status": "ANALYSIS COMPLETE"
-                })
-        
-        if not results:
-            # If no results from text or images, create a default response
-            results = [{
-                "claim": "URL Content Analysis",
-                "result": {
-                    "verdict": "NO FACTUAL CLAIMS",
-                    "confidence": 100,
-                    "explanation": "The URL content does not contain any factual claims that can be verified.",
-                    "sources": []
-                }
-            }]
+        # If no results, create a default response
+        results = [{
+            "claim": f"Content Analysis from {get_platform_name(url)}",
+            "result": {
+                "verdict": "NO FACTUAL CLAIMS",
+                "confidence": 100,
+                "explanation": "The content does not contain any factual claims that can be verified.",
+                "sources": []
+            }
+        }]
         
         return {
             "fact_check_results": results,
             "claims_found": len(results),
             "timestamp": time.time(),
             "source_url": url,
-            "images_analyzed": len(image_urls)
+            "images_detected": len(image_urls)
         }, 200
         
     except Exception as e:
         return {"error": f"URL analysis failed: {str(e)}"}, 500
+
+def fact_check_image_multimodal(image_data_url, image_url, custom_prompt):
+    """Fact-check claims from an image using Perplexity's multimodal capabilities with custom prompt"""
+    if not PERPLEXITY_API_KEY:
+        return {"error": "API key not configured"}, 500
+    
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        # Build Perplexity multimodal prompt
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": custom_prompt}
+                ]
+            }
+        ]
+        
+        # Handle different types of image URLs
+        if image_data_url:
+            messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
+        elif image_url:
+            # Try to handle redirect URLs and protected URLs
+            processed_url = process_image_url(image_url)
+            messages[0]["content"].append({"type": "image_url", "image_url": processed_url})
+
+        payload = {
+            "model": "sonar-pro",  # supports vision per Perplexity docs
+            "messages": messages,
+            "max_tokens": 800,
+        }
+
+        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
+        if sonar_resp.status_code != 200:
+            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
+
+        content = sonar_resp.json()['choices'][0]['message']['content']
+        
+        # Try to parse the response as JSON
+        try:
+            # Clean the content if it has "json" prefix
+            clean_content = content.strip()
+            if clean_content.startswith('json '):
+                clean_content = clean_content[5:].strip()
+            
+            parsed = json.loads(clean_content)
+            
+            # Create the result structure
+            result = {
+                "fact_check_results": [{
+                    "claim": "Multimodal Analysis",
+                    "result": {
+                        "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
+                        "confidence": parsed.get("confidence", 75),
+                        "explanation": parsed.get("explanation", "Analysis completed"),
+                        "sources": parsed.get("sources", [])
+                    }
+                }],
+                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
+                "timestamp": time.time(),
+                "source_url": image_url if image_url else None
+            }
+            
+            return result, 200
+            
+        except json.JSONDecodeError:
+            # If JSON parsing fails, try to extract useful information
+            if "no factual claims" in content.lower() or "no claims" in content.lower():
+                return {
+                    "fact_check_results": [{
+                        "claim": "Multimodal Analysis",
+                        "result": {
+                            "verdict": "NO FACTUAL CLAIMS",
+                            "confidence": 100,
+                            "explanation": "This content does not contain any factual claims that can be verified.",
+                            "sources": []
+                        }
+                    }],
+                    "claims_found": 0,
+                    "timestamp": time.time(),
+                    "source_url": image_url if image_url else None
+                }, 200
+            else:
+                # Try to extract verdict and explanation from the text
+                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
+                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
+                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
+                
+                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
+                confidence = int(confidence_match.group(1)) if confidence_match else 75
+                explanation = explanation_match.group(1) if explanation_match else content
+                
+                return {
+                    "fact_check_results": [{
+                        "claim": "Multimodal Analysis",
+                        "result": {
+                            "verdict": verdict,
+                            "confidence": confidence,
+                            "explanation": explanation,
+                            "sources": []
+                        }
+                    }],
+                    "claims_found": 1,
+                    "timestamp": time.time(),
+                    "source_url": image_url if image_url else None
+                }, 200
+
+    except Exception as e:
+        return {"error": f"Multimodal analysis failed: {str(e)}"}, 500
 
 def get_platform_name(url):
     """Get the platform name from a URL"""
@@ -1181,85 +1304,6 @@ def fact_check_image(image_data_url, image_url):
 
     except Exception as e:
         return {"error": f"Image analysis failed: {str(e)}"}, 500
-
-def fact_check_url_with_images(url):
-    """Fact-check both text and images from a URL"""
-    try:
-        # Extract both text and images from URL
-        content = extract_content_from_url(url)
-        text = content["text"]
-        image_urls = content["image_urls"]
-        
-        results = []
-        
-        # First, fact-check the text content
-        if text and len(text.strip()) > 5:  # Reduced minimum length for tweets
-            text_result = fact_check_text(text)
-            if isinstance(text_result, tuple):
-                text_data, text_status = text_result
-                if text_status == 200 and isinstance(text_data, dict) and 'fact_check_results' in text_data:
-                    results.extend(text_data['fact_check_results'])
-        
-        # Then, fact-check each image
-        for i, image_url in enumerate(image_urls[:3]):  # Limit to first 3 images
-            try:
-                image_result = fact_check_image("", image_url)
-                if isinstance(image_result, tuple):
-                    image_data, image_status = image_result
-                    if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
-                        # Update claim to indicate it's from an image
-                        for result in image_data['fact_check_results']:
-                            result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
-                        results.extend(image_data['fact_check_results'])
-                    else:
-                        # Image analysis failed, add a note about the detected image
-                        platform_name = get_platform_name(image_url)
-                        results.append({
-                            "claim": f"Image {i+1} detected in {platform_name}",
-                            "result": {
-                                "verdict": "IMAGE DETECTED",
-                                "confidence": 100,
-                                "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
-                                "sources": []
-                            },
-                            "status": "ANALYSIS COMPLETE"
-                        })
-            except Exception as e:
-                # If image analysis fails, add a note about the detected image
-                platform_name = get_platform_name(image_url)
-                results.append({
-                    "claim": f"Image {i+1} detected in {platform_name}",
-                    "result": {
-                        "verdict": "IMAGE DETECTED",
-                        "confidence": 100,
-                        "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
-                        "sources": []
-                    },
-                    "status": "ANALYSIS COMPLETE"
-                })
-        
-        if not results:
-            # If no results from text or images, create a default response
-            results = [{
-                "claim": "URL Content Analysis",
-                "result": {
-                    "verdict": "NO FACTUAL CLAIMS",
-                    "confidence": 100,
-                    "explanation": "The URL content does not contain any factual claims that can be verified.",
-                    "sources": []
-                }
-            }]
-        
-        return {
-            "fact_check_results": results,
-            "claims_found": len(results),
-            "timestamp": time.time(),
-            "source_url": url,
-            "images_analyzed": len(image_urls)
-        }, 200
-        
-    except Exception as e:
-        return {"error": f"URL analysis failed: {str(e)}"}, 500
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
