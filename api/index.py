@@ -199,6 +199,82 @@ def extract_text_from_url(url):
     except Exception as e:
         raise ValueError(f"Error extracting content: {str(e)}")
 
+def extract_content_from_url(url):
+    """Extract both text and image URLs from a URL"""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code != 200:
+            raise ValueError(f"Failed to fetch URL (status {response.status_code})")
+        
+        # Parse HTML content
+        soup = BeautifulSoup(response.text, 'lxml')
+        
+        # Extract text content (existing logic)
+        text = extract_text_from_url(url)
+        
+        # Extract image URLs
+        image_urls = []
+        
+        # Look for images in various formats
+        for img in soup.find_all('img'):
+            src = img.get('src') or img.get('data-src')
+            if src:
+                # Convert relative URLs to absolute
+                if src.startswith('//'):
+                    src = 'https:' + src
+                elif src.startswith('/'):
+                    parsed_url = urlparse(url)
+                    src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
+                elif not src.startswith('http'):
+                    parsed_url = urlparse(url)
+                    src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
+                
+                # Filter out small images, icons, and common non-content images
+                if (src and 
+                    not any(skip in src.lower() for skip in ['avatar', 'icon', 'logo', 'emoji', 'favicon', 'analytics', 'tracking']) and
+                    not any(skip in img.get('class', []) for skip in ['avatar', 'icon', 'logo', 'emoji'])):
+                    image_urls.append(src)
+        
+        # For Twitter/X specifically, try to extract media
+        parsed_url = urlparse(url)
+        if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
+            # Try to extract media from Twitter oEmbed
+            try:
+                m = re.search(r"/status/(\d+)", parsed_url.path)
+                if m:
+                    tweet_id = m.group(1)
+                    oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
+                    oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
+                    if oembed_response.status_code == 200:
+                        oembed_data = oembed_response.json()
+                        if oembed_data.get("html"):
+                            # Extract image URLs from oEmbed HTML
+                            oembed_soup = BeautifulSoup(oembed_data["html"], "lxml")
+                            for img in oembed_soup.find_all('img'):
+                                src = img.get('src')
+                                if src and 'media' in src:
+                                    image_urls.append(src)
+            except Exception:
+                pass
+        
+        return {
+            "text": text,
+            "image_urls": list(set(image_urls))  # Remove duplicates
+        }
+        
+    except Exception as e:
+        raise ValueError(f"Error extracting content: {str(e)}")
+
 def fact_check_text(text):
     """Simple fact-check function"""
     if not PERPLEXITY_API_KEY:
@@ -465,6 +541,63 @@ def fact_check_image(image_data_url, image_url):
     except Exception as e:
         return {"error": f"Image analysis failed: {str(e)}"}, 500
 
+def fact_check_url_with_images(url):
+    """Fact-check both text and images from a URL"""
+    try:
+        # Extract both text and images from URL
+        content = extract_content_from_url(url)
+        text = content["text"]
+        image_urls = content["image_urls"]
+        
+        results = []
+        
+        # First, fact-check the text content
+        if text and len(text.strip()) > 20:
+            text_result = fact_check_text(text)
+            if isinstance(text_result, tuple):
+                text_data, text_status = text_result
+                if text_status == 200 and isinstance(text_data, dict) and 'fact_check_results' in text_data:
+                    results.extend(text_data['fact_check_results'])
+        
+        # Then, fact-check each image
+        for i, image_url in enumerate(image_urls[:3]):  # Limit to first 3 images
+            try:
+                image_result = fact_check_image("", image_url)
+                if isinstance(image_result, tuple):
+                    image_data, image_status = image_result
+                    if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
+                        # Update claim to indicate it's from an image
+                        for result in image_data['fact_check_results']:
+                            result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
+                        results.extend(image_data['fact_check_results'])
+            except Exception as e:
+                # If image analysis fails, continue with other images
+                print(f"Image analysis failed for {image_url}: {str(e)}")
+                continue
+        
+        if not results:
+            # If no results from text or images, create a default response
+            results = [{
+                "claim": "URL Content Analysis",
+                "result": {
+                    "verdict": "NO FACTUAL CLAIMS",
+                    "confidence": 100,
+                    "explanation": "The URL content does not contain any factual claims that can be verified.",
+                    "sources": []
+                }
+            }]
+        
+        return {
+            "fact_check_results": results,
+            "claims_found": len(results),
+            "timestamp": time.time(),
+            "source_url": url,
+            "images_analyzed": len(image_urls)
+        }, 200
+        
+    except Exception as e:
+        return {"error": f"URL analysis failed: {str(e)}"}, 500
+
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/health':
@@ -511,12 +644,8 @@ class handler(BaseHTTPRequestHandler):
             else:
                 try:
                     if url:
-                        # Extract text from URL
-                        extracted_text = extract_text_from_url(url)
-                        response_data, status_code = fact_check_text(extracted_text)
-                        # Add source URL to response
-                        if status_code == 200 and isinstance(response_data, dict):
-                            response_data['source_url'] = url
+                        # Extract and fact-check both text and images from URL
+                        response_data, status_code = fact_check_url_with_images(url)
                     else:
                         # Use provided text
                         response_data, status_code = fact_check_text(text)
