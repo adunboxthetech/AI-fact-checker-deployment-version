@@ -593,7 +593,7 @@ def fact_check_url_with_images(url):
                             "result": {
                                 "verdict": "IMAGE DETECTED",
                                 "confidence": 100,
-                                "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to technical limitations. The image may contain additional factual content that is not reflected in the text analysis.",
+                                "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to Twitter's image URL protection. Twitter's pic.twitter.com URLs require special handling that is not currently supported. The image may contain additional factual content that is not reflected in the text analysis.",
                                 "sources": []
                             },
                             "status": "ANALYSIS COMPLETE"
@@ -605,7 +605,7 @@ def fact_check_url_with_images(url):
                     "result": {
                         "verdict": "IMAGE DETECTED",
                         "confidence": 100,
-                        "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to technical limitations. The image may contain additional factual content that is not reflected in the text analysis.",
+                        "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to Twitter's image URL protection. Twitter's pic.twitter.com URLs require special handling that is not currently supported. The image may contain additional factual content that is not reflected in the text analysis.",
                         "sources": []
                     },
                     "status": "ANALYSIS COMPLETE"
