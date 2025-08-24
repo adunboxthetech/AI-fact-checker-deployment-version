@@ -4,7 +4,7 @@ import requests
 import os
 import time
 import re
-from urllib.parse import urlparse, urlunparse, ParseResult, urlencode, parse_qsl
+from urllib.parse import urlparse, urlunparse, ParseResult, urlencode, parse_qsl, urljoin
 from bs4 import BeautifulSoup
 from readability import Document
 
@@ -12,671 +12,134 @@ from readability import Document
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 
-def _looks_like_block_page(text: str) -> bool:
-    if not text:
-        return False
-    t = text.lower()
-    block_markers = [
-        'you have been blocked',
-        'forbidden',
-        'access denied',
-        'security policy',
-        'verify you are a human',
-        'cloudflare',
-        'attention required',
-        'not allowed to access',
-        'please enable cookies',
-        'warning: target url returned error 403'
-    ]
-    return any(m in t for m in block_markers)
-
-def _fetch_proxied_html(url: str, headers: dict) -> str:
-    candidates = [
-        f"https://api.allorigins.win/raw?url={url}",
-        f"https://r.jina.ai/{url}"
-    ]
-    for u in candidates:
-        try:
-            r = requests.get(u, headers=headers, timeout=15)
-            if r.status_code == 200 and r.text and len(r.text) > 50:
-                return r.text
-        except Exception:
-            continue
-    return ''
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1"
+}
 
 def _build_reddit_json_url(url: str) -> str:
-    """Build a proper Reddit JSON URL, inserting .json before query and adding raw_json=1."""
     pu = urlparse(url)
-    # Ensure host is reddit domain if a redd.it shortlink, pass through path
     path = pu.path.rstrip('/')
     if not path.endswith('.json'):
-        path = path + '.json'
-    # merge query params and ensure raw_json=1
+        path += '.json'
     q = dict(parse_qsl(pu.query, keep_blank_values=True))
     q['raw_json'] = '1'
-    new_q = urlencode(q, doseq=True)
-    new_parts = ParseResult(pu.scheme, pu.netloc, path, pu.params, new_q, pu.fragment)
-    return urlunparse(new_parts)
+    return urlunparse(pu._replace(path=path, query=urlencode(q)))
 
-def extract_text_from_url(url):
-    """Extract text content from a URL with robust social media handling"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
-        "Cache-Control": "max-age=0"
-    }
-    
+def _resolve_url(base, path):
+    if not path:
+        return None
+    return urljoin(base, path)
+
+def _is_image_like(url: str) -> bool:
+    if not isinstance(url, str):
+        return False
+    pu = urlparse(url)
+    if re.search(r'\.(jpg|jpeg|png|gif|webp)$', pu.path, re.I):
+        return True
+    # Allow known image hosts even without extension
+    return any(h in pu.netloc for h in ["pbs.twimg.com", "i.redd.it", "i.imgur.com"])
+
+def extract_content_from_url(url: str) -> dict:
+    """Extracts text and image URLs from a given URL with platform-specific logic."""
+    parsed_url = urlparse(url)
+    netloc = parsed_url.netloc
+    text_content = ""
+    image_urls = []
+
     try:
-        parsed_url = urlparse(url)
-        
-        # Special handling for Reddit - multiple strategies
-        if parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
-            # Strategy 1: Try Reddit JSON API with different user agents
-            try:
-                # Convert to JSON URL (prefer raw_json=1 to avoid HTML entities)
-                json_url = _build_reddit_json_url(url)
-                
-                # Try multiple user agents to avoid blocking
-                user_agents = [
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0"
-                ]
-                
-                for user_agent in user_agents:
-                    try:
-                        rj_headers = {
-                            "User-Agent": user_agent,
-                            "Accept": "application/json, text/plain, */*",
-                            "Accept-Language": "en-US,en;q=0.9",
-                            "Accept-Encoding": "gzip, deflate, br",
-                            "DNT": "1",
-                            "Connection": "keep-alive",
-                            "Sec-Fetch-Dest": "empty",
-                            "Sec-Fetch-Mode": "cors",
-                            "Sec-Fetch-Site": "same-origin"
-                        }
-                        
-                        rj = requests.get(json_url, headers=rj_headers, timeout=15)
-                        if rj.status_code == 200:
-                            data = rj.json()
-                            
-                            # Handle different Reddit JSON structures
-                            try:
-                                # Standard post JSON: [post, comments]
-                                if isinstance(data, list) and len(data) > 0:
-                                    post = data[0]["data"]["children"][0]["data"]
-                                else:
-                                    post = data["data"]["children"][0]["data"]
-                                
-                                title = post.get("title", "")
-                                selftext = post.get("selftext", "") or post.get("body", "")
-                                text = f"{title}. {selftext}".strip()
-                                
-                                if len(text) > 30:
-                                    return text
-                                    
-                            except Exception as e:
-                                # Try alternative JSON structure
-                                if isinstance(data, dict):
-                                    if "data" in data and "children" in data["data"]:
-                                        children = data["data"]["children"]
-                                        if children and isinstance(children[0], dict) and "data" in children[0]:
-                                            post_data = children[0]["data"]
-                                            title = post_data.get("title", "")
-                                            selftext = post_data.get("selftext", "") or post_data.get("body", "")
-                                            text = f"{title}. {selftext}".strip()
-                                            if len(text) > 30:
-                                                return text
-                                
-                    except Exception:
-                        continue
-                        
-            except Exception as e:
-                pass
-            
-            # Strategy 2: Try old.reddit.com version
-            try:
-                old_reddit_url = url.replace("www.reddit.com", "old.reddit.com").replace("reddit.com", "old.reddit.com")
-                old_headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-US,en;q=0.5",
-                    "Accept-Encoding": "gzip, deflate",
-                    "DNT": "1",
-                    "Connection": "keep-alive",
-                    "Upgrade-Insecure-Requests": "1"
-                }
-                
-                response = requests.get(old_reddit_url, headers=old_headers, timeout=20)
-                if response.status_code == 200:
-                    html = response.text
-                    soup = BeautifulSoup(html, "lxml")
-                    
-                    # Look for Reddit post content
-                    post_content = soup.find("div", class_="usertext-body")
-                    if post_content:
-                        text = post_content.get_text(separator=" ", strip=True)
-                        if len(text) > 30:
-                            return text
-                    
-                    # Look for title
-                    title_elem = soup.find("h1", class_="title")
-                    if title_elem:
-                        title = title_elem.get_text(strip=True)
-                        if len(title) > 10:
-                            return title
-                            
-            except Exception as e:
-                pass
-            
-            # Strategy 3: Try Reddit's oEmbed endpoint
-            try:
-                # Extract post ID from URL
-                post_match = re.search(r'/comments/([a-zA-Z0-9]+)', url)
-                if post_match:
-                    post_id = post_match.group(1)
-                    oembed_url = f"https://www.reddit.com/oembed?url=https://www.reddit.com/comments/{post_id}/"
-                    
-                    oembed_headers = {
-                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept": "application/json"
-                    }
-                    
-                    oembed_response = requests.get(oembed_url, headers=oembed_headers, timeout=15)
-                    if oembed_response.status_code == 200:
-                        oembed_data = oembed_response.json()
-                        if oembed_data.get("title"):
-                            return oembed_data["title"]
-                            
-            except Exception as e:
-                pass
-        
-        # Special handling for Twitter/X using syndication endpoint
-        if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com", "m.twitter.com"} and "/status/" in parsed_url.path:
-            m = re.search(r"/status/(\d+)", parsed_url.path)
-            if m:
-                tweet_id = m.group(1)
-                
-                # Try Twitter syndication endpoint first
+        # Twitter/X handler
+        if 'twitter.com' in netloc or 'x.com' in netloc:
+            match = re.search(r'/status/(\d+)', parsed_url.path)
+            if match:
+                tweet_id = match.group(1)
+                # Use Twitter's syndication API for reliable content
+                api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
                 try:
-                    tw = requests.get(
-                        "https://cdn.syndication.twimg.com/widgets/tweet",
-                        params={"id": tweet_id, "lang": "en"}, headers=headers, timeout=12
-                    )
-                    if tw.status_code == 200:
-                        data = tw.json()
-                        text = data.get("text") or data.get("full_text") or data.get("i18n_text") or ""
-                        if not text and data.get("body_html"):
-                            text = BeautifulSoup(data["body_html"], "lxml").get_text(" ", strip=True)
-                        if text and len(text) > 20:
-                            return text
+                    r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=10)
+                    if r.status_code == 200:
+                        data = r.json()
+                        text_content = data.get('text', '')
+                        for photo in data.get('photos', []):
+                            image_urls.append(photo.get('url'))
+                        if data.get('video'):
+                            image_urls.append(data['video'].get('poster'))
                 except Exception:
-                    pass
-                
-                # Fallback: Try Twitter's oEmbed endpoint
-                try:
-                    oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
-                    oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
-                    if oembed_response.status_code == 200:
-                        oembed_data = oembed_response.json()
-                        if oembed_data.get("html"):
-                            # Extract text from oEmbed HTML
-                            soup = BeautifulSoup(oembed_data["html"], "lxml")
-                            # Remove all links and formatting, keep only text
-                            for tag in soup.find_all(['a', 'strong', 'em', 'b', 'i']):
-                                tag.unwrap()
-                            text = soup.get_text(" ", strip=True)
-                            if text and len(text) > 20:
-                                return text
-                except Exception:
-                    pass
-        
-        # Try direct HTML request with enhanced headers
-        try:
-            response = requests.get(url, headers=headers, timeout=20)
-            if response.status_code == 200:
-                # Parse HTML content
-                html = response.text
-                
-                # Use readability for better content extraction
-                try:
-                    doc = Document(html)
-                    title = doc.short_title()
-                    summary_html = doc.summary()
-                    soup = BeautifulSoup(summary_html, "lxml")
-                    main_text = soup.get_text(separator=" ", strip=True)
-                    
-                    # If readability extraction is too short, try fallback
-                    if len(main_text) < 100:
-                        # Fallback to full page extraction
-                        full_soup = BeautifulSoup(html, "lxml")
-                        main_text = full_soup.get_text(separator=" ", strip=True)
-                except Exception:
-                    # If readability fails, use direct BeautifulSoup
-                    soup = BeautifulSoup(html, "lxml")
-                    main_text = soup.get_text(separator=" ", strip=True)
-                
-                # Clean up the text
-                main_text = re.sub(r'\s+', ' ', main_text).strip()
-                
-                if len(main_text) > 50:
-                    return main_text
-                    
-        except Exception as e:
-            # HTML approach failed
-            pass
-        
-        # Final fallback: Try Jina Reader proxy
-        try:
-            q = f"?{parsed_url.query}" if parsed_url.query else ""
-            wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
-            jr = requests.get(wrapped, headers=headers, timeout=18)
-            if jr.status_code == 200 and len(jr.text.strip()) > 50:
-                cleaned = re.sub(r'\s+', ' ', jr.text).strip()
-                if not _looks_like_block_page(cleaned):
-                    return cleaned
-        except Exception as e:
-            pass
-        
-        # Ultimate fallback: Try multiple proxy services
-        proxy_services = [
-            f"https://r.jina.ai/{url}",
-            f"https://api.allorigins.win/raw?url={url}",
-            f"https://cors-anywhere.herokuapp.com/{url}",
-            f"https://thingproxy.freeboard.io/fetch/{url}"
-        ]
-        
-        for proxy_url in proxy_services:
-            try:
-                proxy_headers = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-                }
-                
-                proxy_response = requests.get(proxy_url, headers=proxy_headers, timeout=20)
-                if proxy_response.status_code == 200 and len(proxy_response.text.strip()) > 100:
-                    # Clean the proxied content
-                    soup = BeautifulSoup(proxy_response.text, "lxml")
-                    text = soup.get_text(separator=" ", strip=True)
-                    text = re.sub(r'\s+', ' ', text).strip()
-                    if not _looks_like_block_page(text) and len(text) > 50:
-                        return text
-                        
-            except Exception as e:
-                continue
-        
-        # If all methods fail, raise an error
-        raise ValueError(f"Failed to extract content from URL after trying multiple methods")
-        
-    except Exception as e:
-        raise ValueError(f"Error extracting content: {str(e)}")
+                    pass # Fallback to generic scraper if API fails
 
-def extract_content_from_url(url):
-    """Extract both text and image URLs from a URL using multiple strategies"""
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate",
-        "DNT": "1",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1"
-    }
-    
-    try:
-        parsed_url = urlparse(url)
-        response = requests.get(url, headers=headers, timeout=20)
-        if response.status_code != 200:
-            # Fall back to robust text extractor (handles Reddit JSON and Jina Reader)
-            text = extract_text_from_url(url)
-            # Try to get RAW HTML via AllOrigins (contains meta tags) for OG/Twitter image extraction
-            soup = BeautifulSoup('', 'lxml')
-            try:
-                ao = requests.get(f"https://api.allorigins.win/raw?url={url}", headers=headers, timeout=18)
-                if ao.status_code == 200 and ao.text:
-                    soup = BeautifulSoup(ao.text, 'lxml')
-            except Exception:
-                pass
-        else:
-            # Parse HTML content
-            soup = BeautifulSoup(response.text, 'lxml')
-            
-            # Extract text content (existing logic)
-            text = extract_text_from_url(url)
-        
-        # Extract image URLs using multiple strategies
-        image_urls = []
-        
-        # Strategy 1: Extract from HTML img tags (only if we have HTML)
-        if soup and soup.find_all:
-            for img in soup.find_all('img'):
-                src = img.get('src') or img.get('data-src') or img.get('data-original')
-                if src:
-                    # Convert relative URLs to absolute
-                    if src.startswith('//'):
-                        src = 'https:' + src
-                    elif src.startswith('/'):
-                        src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
-                    elif not src.startswith('http'):
-                        src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
-                    
-                    # Filter out small images, icons, and common non-content images
-                    if (src and 
-                        not any(skip in src.lower() for skip in ['avatar', 'icon', 'logo', 'emoji', 'favicon', 'analytics', 'tracking', 'ads']) and
-                        not any(skip in img.get('class', []) for skip in ['avatar', 'icon', 'logo', 'emoji']) and
-                        not any(skip in (img.get('alt', '') or '').lower() for skip in ['avatar', 'icon', 'logo', 'emoji'])):
-                        image_urls.append(src)
-        
-        # Strategy 2: Platform-specific extraction
-        platform_images = extract_platform_specific_images(url, parsed_url, headers, text)
-        image_urls.extend(platform_images)
-        
-        # Strategy 3: Look for image URLs in text content
-        text_image_urls = extract_image_urls_from_text(text, url)
-        image_urls.extend(text_image_urls)
-        
-        # Strategy 4: Look for Open Graph and Twitter Card images
-        og_images = []
-        if soup and soup.find_all:
-            og_images = extract_og_images(soup, parsed_url)
-            image_urls.extend(og_images)
-        # If we didn't find OG images and site may be JS-rendered (e.g., Reddit), try proxied HTML
-        if (not og_images) and parsed_url.netloc.endswith('reddit.com'):
-            try:
-                proxied_html = _fetch_proxied_html(url, headers)
-                if proxied_html:
-                    proxied_soup = BeautifulSoup(proxied_html, 'lxml')
-                    proxied_ogs = extract_og_images(proxied_soup, parsed_url)
-                    image_urls.extend(proxied_ogs)
-            except Exception:
-                pass
-        
-        # Remove duplicates and filter
-        unique_images = []
-        seen = set()
-        for img_url in image_urls:
-            if img_url and img_url not in seen:
-                seen.add(img_url)
-                unique_images.append(img_url)
-        
-        return {
-            "text": text,
-            "image_urls": unique_images
-        }
-        
-    except Exception as e:
-        raise ValueError(f"Error extracting content: {str(e)}")
-
-def extract_platform_specific_images(url, parsed_url, headers, text_content):
-    """Extract images from known platforms using platform-specific logic"""
-    images = []
-    
-    # Twitter/X
-    if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
-        try:
-            m = re.search(r"/status/(\d+)", parsed_url.path)
-            if m:
-                tweet_id = m.group(1)
-                cdn_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}"
-                tr = requests.get(cdn_url, headers={"User-Agent": headers.get("User-Agent", "Mozilla/5.0")}, timeout=12)
-                if tr.status_code == 200 and tr.text:
-                    try:
-                        tj = json.loads(tr.text)
-                        # Photos
-                        for ph in (tj.get("photos") or []):
-                            u = ph.get("url") or ph.get("image_url")
-                            if u:
-                                images.append(u)
-                        # Video poster or variants (fallback to poster)
-                        v = tj.get("video") or {}
-                        if isinstance(v, dict):
-                            poster = v.get("poster")
-                            if poster:
-                                images.append(poster)
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-        # 2) As a fallback, capture pic.twitter.com shortlinks in the text
-        pic_urls = re.findall(r"https?://pic\.twitter\.com/\S+", text_content or "")
-        images.extend(pic_urls)
-    
-    # Reddit
-    elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
-        try:
-            # Prefer Reddit JSON for reliable media discovery
+        # Reddit handler
+        elif 'reddit.com' in netloc or 'redd.it' in netloc:
             json_url = _build_reddit_json_url(url)
-            rj_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept": "application/json"
-            }
-            rj = requests.get(json_url, headers=rj_headers, timeout=12)
-            data = None
-            if rj.status_code == 200:
-                data = rj.json()
-            else:
-                # Try proxy fallbacks for Reddit JSON
-                proxy_candidates = [
-                    f"https://r.jina.ai/{json_url}",
-                    f"https://api.allorigins.win/raw?url={json_url}"
-                ]
-                for purl in proxy_candidates:
-                    try:
-                        pr = requests.get(purl, headers=rj_headers, timeout=12)
-                        if pr.status_code == 200 and pr.text:
-                            try:
-                                data = json.loads(pr.text)
-                                break
-                            except Exception:
-                                continue
-                    except Exception:
-                        continue
-            # Additional fallback: Reddit api/info.json by URL
-            if data is None:
-                try:
-                    info_url = f"https://www.reddit.com/api/info.json?{urlencode({'url': url, 'raw_json': 1})}"
-                    ir = requests.get(info_url, headers=rj_headers, timeout=12)
-                    if ir.status_code != 200:
-                        # try proxies
-                        for p in [f"https://api.allorigins.win/raw?url={info_url}", f"https://r.jina.ai/{info_url}"]:
-                            try:
-                                pir = requests.get(p, headers=rj_headers, timeout=12)
-                                if pir.status_code == 200 and pir.text:
-                                    ir = pir
-                                    break
-                            except Exception:
-                                continue
-                    if ir.status_code == 200:
-                        info = json.loads(ir.text)
-                        # find first child data
-                        children = info.get('data', {}).get('children', [])
-                        if children:
-                            data = {"data": {"children": children}}
-                except Exception:
-                    pass
-            post = {}
-            if data is not None:
-                try:
-                    post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
-                except Exception:
-                    post = {}
-                
-                # Direct URL field
-                cand = post.get("url_overridden_by_dest") or post.get("url")
-                if isinstance(cand, str) and re.search(r'\.(jpg|jpeg|png|gif|webp)(?:\?|$)', cand, re.I):
-                    images.append(cand)
-                
-                # Preview images
-                preview = post.get("preview") or {}
-                for img in (preview.get("images") or []):
-                    src = (img.get("source") or {}).get("url") or ""
-                    if src:
-                        images.append(src.replace('&amp;', '&'))
-                    for res in (img.get("resolutions") or []):
-                        u = res.get("url")
-                        if u:
-                            images.append(u.replace('&amp;', '&'))
-                
-                # Gallery images
-                media_meta = post.get("media_metadata") or {}
-                gallery = post.get("gallery_data") or {}
-                if media_meta:
-                    if gallery and isinstance(gallery.get("items"), list):
-                        for it in gallery["items"]:
-                            m = media_meta.get(it.get("media_id")) or {}
-                            if isinstance(m, dict):
-                                s = (m.get("s") or {}).get("u") or ""
-                                if s:
-                                    images.append(s.replace('&amp;', '&'))
-                                for p in (m.get("p") or []):
-                                    u = p.get("u")
-                                    if u:
-                                        images.append(u.replace('&amp;', '&'))
-                    else:
-                        for m in media_meta.values():
-                            if isinstance(m, dict):
-                                s = (m.get("s") or {}).get("u") or ""
-                                if s:
-                                    images.append(s.replace('&amp;', '&'))
-                
-                # Secure media thumbnails
-                sm = post.get("secure_media") or {}
-                thumb = (sm.get("oembed") or {}).get("thumbnail_url")
-                if thumb:
-                    images.append(thumb)
-            
-            # If still nothing and we can read OG from Jina HTML
-            if not images:
-                try:
-                    wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
-                    jr = requests.get(wrapped, headers=headers, timeout=15)
-                    if jr.status_code == 200 and jr.text:
-                        jr_soup = BeautifulSoup(jr.text, 'lxml')
-                        ogs = extract_og_images(jr_soup, parsed_url)
-                        images.extend(ogs)
-                except Exception:
-                    pass
-
-            # Fallback: regex for i.redd.it and imgur links in text
-            reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif)', text_content)
-            images.extend(reddit_images)
-            imgur_images = re.findall(r'https://i?\.imgur\.com/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif)', text_content)
-            images.extend(imgur_images)
-        except Exception:
-            pass
-    
-    # Instagram
-    elif parsed_url.netloc in {"instagram.com", "www.instagram.com"}:
-        try:
-            # Instagram often has direct image URLs
-            instagram_images = re.findall(r'https://scontent-[a-z0-9-]+\.cdninstagram\.com/[^"\s]+', text_content)
-            images.extend(instagram_images)
-        except Exception:
-            pass
-    
-    # Facebook
-    elif parsed_url.netloc in {"facebook.com", "www.facebook.com", "fb.com", "www.fb.com"}:
-        try:
-            # Facebook often has direct image URLs
-            facebook_images = re.findall(r'https://scontent-[a-z0-9-]+\.fbcdn\.net/[^"\s]+', text_content)
-            images.extend(facebook_images)
-        except Exception:
-            pass
-    
-    return images
-
-def process_image_url(image_url):
-    """Process image URLs to handle redirects and protected URLs"""
-    try:
-        # For Twitter pic.twitter.com URLs, try to resolve to pbs.twimg.com
-        if 'pic.twitter.com' in image_url:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-            }
             try:
-                r = requests.get(image_url, headers=headers, timeout=12, allow_redirects=True)
+                r = requests.get(json_url, headers=DEFAULT_HEADERS, timeout=10)
                 if r.status_code == 200:
-                    m = re.search(r'https://pbs\.twimg\.com/media/[^"\s>]+', r.text)
-                    if not m:
-                        m = re.search(r'https://pbs\.twimg\.com/[^"\s>]+', r.text)
-                    if not m:
-                        m = re.search(r'property="og:image"\s+content="(https://pbs\.twimg\.com/[^"\s>]+)"', r.text)
-                    if m:
-                        return m.group(1)
+                    data = r.json()
+                    post_data = data[0]['data']['children'][0]['data']
+                    text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
+                    
+                    # Extract images from various Reddit structures
+                    if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
+                        image_urls.append(post_data['url_overridden_by_dest'])
+                    if 'preview' in post_data:
+                        for img in post_data['preview'].get('images', []):
+                            image_urls.append(img['source']['url'].replace('&amp;', '&'))
+                    if 'media_metadata' in post_data:
+                        for media_id in post_data['media_metadata']:
+                            media = post_data['media_metadata'][media_id]
+                            if media['e'] == 'Image':
+                                image_urls.append(media['s']['u'].replace('&amp;', '&'))
             except Exception:
-                pass
-            # Fall back to original short URL if parsing fails
-            return image_url
-        
-        # For other URLs, return as is
-        return image_url
-    except Exception:
-        # If processing fails, return the original URL
-        return image_url
+                pass # Fallback to generic scraper
 
-def extract_image_urls_from_text(text, base_url):
-    """Extract image URLs from text content"""
-    image_urls = []
-    
-    # Common image URL patterns
-    patterns = [
-        r'https://[^"\s]+\.(?:jpg|jpeg|png|gif|webp)',
-        r'https://[^"\s]+\.(?:jpg|jpeg|png|gif|webp)\?[^"\s]*',
-        r'https://pic\.twitter\.com/[a-zA-Z0-9]+',
-        r'https://imgur\.com/[a-zA-Z0-9]+',
-        r'https://i\.redd\.it/[a-zA-Z0-9]+\.(?:jpg|jpeg|png|gif)',
-        r'https://scontent-[a-z0-9-]+\.cdninstagram\.com/[^"\s]+',
-        r'https://scontent-[a-z0-9-]+\.fbcdn\.net/[^"\s]+'
-    ]
-    
-    for pattern in patterns:
-        matches = re.findall(pattern, text)
-        image_urls.extend(matches)
-    
-    return image_urls
+        # Generic URL handler (fallback for social media or primary for other sites)
+        if not text_content:
+            try:
+                r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
+                r.raise_for_status()
+                html = r.text
+                doc = Document(html)
+                text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
+                if len(text_content) < 150: # If readability fails, use full body
+                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+                
+                soup = BeautifulSoup(html, 'lxml')
+                # OpenGraph and Twitter Card images
+                for prop in ['og:image', 'og:image:secure_url', 'twitter:image']:
+                    meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
+                    if meta and meta.get('content'):
+                        image_urls.append(_resolve_url(url, meta['content']))
+                # Find all `img` tags
+                for img in soup.find_all('img'):
+                    src = img.get('src') or img.get('data-src')
+                    if src:
+                        image_urls.append(_resolve_url(url, src))
 
-def extract_og_images(soup, parsed_url):
-    """Extract Open Graph and Twitter Card images"""
-    image_urls = []
-    
-    # Open Graph images
-    og_images = soup.find_all('meta', property='og:image')
-    og_images += soup.find_all('meta', property='og:image:secure_url')
-    for og_img in og_images:
-        src = og_img.get('content')
-        if src:
-            if src.startswith('//'):
-                src = 'https:' + src
-            elif src.startswith('/'):
-                src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
-            elif not src.startswith('http'):
-                src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
-            image_urls.append(src)
-    
-    # Twitter Card images
-    twitter_images = soup.find_all('meta', attrs={'name': 'twitter:image'})
-    for twitter_img in twitter_images:
-        src = twitter_img.get('content')
-        if src:
-            if src.startswith('//'):
-                src = 'https:' + src
-            elif src.startswith('/'):
-                src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
-            elif not src.startswith('http'):
-                src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
-            image_urls.append(src)
-    
-    return image_urls
+            except requests.RequestException as e:
+                raise ValueError(f"Failed to fetch URL: {e}")
+            except Exception as e:
+                raise ValueError(f"Failed to parse content: {e}")
+
+    except Exception as e:
+        return {"text": f"Extraction failed: {e}", "image_urls": []}
+
+    # Clean up and final processing
+    text_content = ' '.join(text_content.split())
+    if len(text_content) > 12000:
+        text_content = text_content[:12000] + '…'
+
+    # Filter and deduplicate image URLs
+    unique_images = sorted(list(set(filter(None, image_urls))))
+    final_images = [img for img in unique_images if _is_image_like(img)]
+
+    return {
+        "text": text_content or "No text content found.",
+        "image_urls": final_images[:10] # Limit to 10 images
+    }
 
 def fact_check_text(text):
     """Simple fact-check function"""
