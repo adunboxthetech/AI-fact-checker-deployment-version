@@ -113,20 +113,25 @@ body {
 }
 
 .subtitle {
-    margin-top: 6px;
+    margin-top: 8px;
     color: var(--muted);
     font-weight: 500;
-    margin-bottom: 2px;
-    font-size: 0.9rem;
+    font-size: 1rem; /* Increased font size */
+    text-align: center; /* Center align */
+    max-width: 550px; /* Max width for better readability */
+    margin-left: auto; /* Center align */
+    margin-right: auto; /* Center align */
 }
 
 .subtitle-hint {
-    font-size: 0.75rem;
+    font-size: 0.85rem; /* Increased font size */
     color: var(--muted);
     font-weight: 400;
-    opacity: 0.85;
-    margin: 0;
-    line-height: 1.3;
+    opacity: 0.9; /* Increased opacity */
+    margin: 4px auto 0; /* Center align and add margin */
+    line-height: 1.4;
+    text-align: center; /* Center align */
+    max-width: 550px; /* Max width for better readability */
 }
 
 .icon-btn {
