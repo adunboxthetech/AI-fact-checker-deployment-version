@@ -586,9 +586,30 @@ def fact_check_url_with_images(url):
                         for result in image_data['fact_check_results']:
                             result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
                         results.extend(image_data['fact_check_results'])
+                    else:
+                        # Image analysis failed, add a note about the detected image
+                        results.append({
+                            "claim": f"Image {i+1} detected in tweet",
+                            "result": {
+                                "verdict": "IMAGE DETECTED",
+                                "confidence": 100,
+                                "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to technical limitations. The image may contain additional factual content that is not reflected in the text analysis.",
+                                "sources": []
+                            },
+                            "status": "ANALYSIS COMPLETE"
+                        })
             except Exception as e:
-                # If image analysis fails, continue with other images
-                continue
+                # If image analysis fails, add a note about the detected image
+                results.append({
+                    "claim": f"Image {i+1} detected in tweet",
+                    "result": {
+                        "verdict": "IMAGE DETECTED",
+                        "confidence": 100,
+                        "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to technical limitations. The image may contain additional factual content that is not reflected in the text analysis.",
+                        "sources": []
+                    },
+                    "status": "ANALYSIS COMPLETE"
+                })
         
         if not results:
             # If no results from text or images, create a default response
