@@ -382,7 +382,7 @@ def fact_check_image(image_data_url, image_url):
             messages[0]["content"].append({"type": "image_url", "image_url": image_url})
 
         payload = {
-            "model": "llama-3.1-sonar-large-128k-online",  # Better multimodal capabilities
+            "model": "sonar-pro",  # supports vision per Perplexity docs
             "messages": messages,
             "max_tokens": 800,
         }
