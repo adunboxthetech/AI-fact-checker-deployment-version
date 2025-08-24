@@ -81,129 +81,175 @@ def _is_image_like(url):
     return False
 
 def extract_content_from_url(url):
-    """FIXED: Extract both text and images with proper Twitter handling"""
+    """DEBUG VERSION: Extract both text and images with detailed logging"""
     parsed_url = urlparse(url)
     netloc = parsed_url.netloc
     text_content = ""
     image_urls = []
     
-    print(f"Extracting content from: {url}")
+    print(f"\n🔍 DEBUG: Starting extraction from: {url}")
+    print(f"🔍 DEBUG: Parsed netloc: {netloc}")
     
     try:
-        # Enhanced Twitter/X handler
+        # Enhanced Twitter/X handler with DEBUG
         if 'twitter.com' in netloc or 'x.com' in netloc:
             match = re.search(r'/status/(\d+)', parsed_url.path)
             if match:
                 tweet_id = match.group(1)
-                print(f"Processing Twitter/X tweet ID: {tweet_id}")
+                print(f"🔍 DEBUG: Tweet ID extracted: {tweet_id}")
                 
-                # Method 1: Twitter syndication API with better parsing
+                # Method 1: Twitter syndication API
                 try:
                     api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
+                    print(f"🔍 DEBUG: Calling Twitter API: {api_url}")
+                    
                     r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=15)
+                    print(f"🔍 DEBUG: Twitter API status: {r.status_code}")
+                    
                     if r.status_code == 200:
                         data = r.json()
+                        print(f"🔍 DEBUG: Twitter API response keys: {list(data.keys())}")
                         
-                        # Get the actual tweet text, not the metadata
+                        # Debug: Show raw response
+                        print(f"🔍 DEBUG: Raw Twitter  {json.dumps(data, indent=2)[:1000]}...")
+                        
                         tweet_text = data.get('text', '').strip()
+                        print(f"🔍 DEBUG: Raw tweet text: '{tweet_text}'")
                         
-                        # Filter out metadata-only content
+                        # Check for photos in response
+                        photos = data.get('photos', [])
+                        print(f"🔍 DEBUG: Photos array length: {len(photos)}")
+                        print(f"🔍 DEBUG: Photos  {photos}")
+                        
+                        if photos:
+                            for i, photo in enumerate(photos):
+                                img_url = photo.get('url')
+                                print(f"🔍 DEBUG: Photo {i+1} URL: {img_url}")
+                                if img_url:
+                                    image_urls.append(img_url)
+                                    print(f"✅ DEBUG: Added image URL: {img_url}")
+                        else:
+                            print("❌ DEBUG: No photos found in Twitter API response")
+                        
+                        # Check for video
+                        if data.get('video'):
+                            print(f"🔍 DEBUG: Video data found: {data.get('video')}")
+                            if data['video'].get('poster'):
+                                image_urls.append(data['video']['poster'])
+                                print(f"✅ DEBUG: Added video poster: {data['video']['poster']}")
+                        
+                        # Filter text content
                         if tweet_text and not re.match(r'^[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF\s@\w\./:-]*$', tweet_text):
                             text_content = tweet_text
-                            print(f"Twitter API extracted text: {text_content[:100]}...")
+                            print(f"✅ DEBUG: Text content accepted: {text_content[:100]}...")
                         else:
-                            print("Twitter API returned metadata only, no meaningful text")
+                            print(f"❌ DEBUG: Text content rejected (metadata only): {tweet_text}")
                         
-                        # Extract photos - CRITICAL FIX
-                        for photo in data.get('photos', []):
-                            img_url = photo.get('url')
-                            if img_url:
-                                image_urls.append(img_url)
-                                print(f"Found Twitter photo: {img_url}")
-                        
-                        # Extract video poster
-                        if data.get('video') and data['video'].get('poster'):
-                            image_urls.append(data['video']['poster'])
-                            print(f"Found Twitter video poster: {data['video']['poster']}")
-                        
-                        print(f"Twitter API extracted {len(image_urls)} images")
+                        print(f"🔍 DEBUG: Twitter API final - Images: {len(image_urls)}, Text length: {len(text_content)}")
                         
                 except Exception as e:
-                    print(f"Twitter syndication API failed: {e}")
+                    print(f"❌ DEBUG: Twitter API failed: {e}")
                 
-                # Method 2: oEmbed fallback with better parsing
-                if not text_content and not image_urls:
+                # Method 2: oEmbed fallback - ONLY if no images found
+                if not image_urls:
+                    print(f"🔍 DEBUG: No images from API, trying oEmbed...")
                     try:
                         oembed_url = f"https://publish.twitter.com/oembed?url={url}"
+                        print(f"🔍 DEBUG: oEmbed URL: {oembed_url}")
+                        
                         r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=15)
+                        print(f"🔍 DEBUG: oEmbed status: {r.status_code}")
+                        
                         if r.status_code == 200:
                             oembed_data = r.json()
+                            print(f"🔍 DEBUG: oEmbed keys: {list(oembed_data.keys())}")
+                            
                             html_content = oembed_data.get('html', '')
+                            print(f"🔍 DEBUG: oEmbed HTML length: {len(html_content)}")
                             
                             if html_content:
                                 soup = BeautifulSoup(html_content, 'lxml')
                                 
-                                # Better text extraction from oEmbed HTML
-                                blockquote = soup.find('blockquote')
-                                if blockquote:
-                                    # Remove links and extract clean text
-                                    for link in blockquote.find_all('a'):
-                                        link.decompose()
-                                    
-                                    text_content = blockquote.get_text(strip=True)
-                                    # Clean up common Twitter artifacts
-                                    text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
-                                    text_content = re.sub(r'https://t\.co/\w+', '', text_content)
-                                    text_content = text_content.strip()
-                                    
-                                    if text_content:
-                                        print(f"oEmbed extracted text: {text_content[:100]}...")
+                                # Look for images in oEmbed HTML
+                                imgs = soup.find_all('img')
+                                print(f"🔍 DEBUG: Found {len(imgs)} img tags in oEmbed")
                                 
-                                # Extract images from oEmbed
-                                for img in soup.find_all('img'):
+                                for i, img in enumerate(imgs):
                                     src = img.get('src')
+                                    print(f"🔍 DEBUG: Image {i+1} src: {src}")
                                     if src and _is_image_like(src):
                                         image_urls.append(src)
-                                        print(f"Found oEmbed image: {src}")
-                                        
-                                print(f"oEmbed extracted {len(image_urls)} images")
+                                        print(f"✅ DEBUG: Added oEmbed image: {src}")
+                                    else:
+                                        print(f"❌ DEBUG: Image rejected by _is_image_like: {src}")
+                                
+                                # Extract text if not already found
+                                if not text_content:
+                                    blockquote = soup.find('blockquote')
+                                    if blockquote:
+                                        for link in blockquote.find_all('a'):
+                                            link.decompose()
+                                        text_content = blockquote.get_text(strip=True)
+                                        text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
+                                        text_content = text_content.strip()
+                                        print(f"✅ DEBUG: oEmbed text extracted: {text_content[:100]}...")
+                                
+                                print(f"🔍 DEBUG: oEmbed final - Images: {len(image_urls)}, Text: {len(text_content)}")
                                 
                     except Exception as e:
-                        print(f"Twitter oEmbed failed: {e}")
+                        print(f"❌ DEBUG: oEmbed failed: {e}")
+                
+                # Method 3: Force add some test images if still none found (for debugging)
+                if not image_urls:
+                    print(f"🔍 DEBUG: Still no images found, checking if this is a media tweet...")
+                    # Look for pic.twitter.com links in the URL or elsewhere
+                    if 'pic.twitter.com' in url or '/photo/' in url:
+                        print(f"🔍 DEBUG: This appears to be a media tweet but no images extracted")
+                    
+                    # For debugging, let's try a different approach
+                    try:
+                        # Try direct scraping with more aggressive headers
+                        scrape_headers = {
+                            **DEFAULT_HEADERS,
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+                            "Sec-Fetch-Dest": "document",
+                            "Sec-Fetch-Mode": "navigate",
+                            "Sec-Fetch-Site": "none",
+                            "Sec-Fetch-User": "?1",
+                            "Upgrade-Insecure-Requests": "1",
+                            "Cache-Control": "no-cache",
+                            "Pragma": "no-cache"
+                        }
+                        
+                        print(f"🔍 DEBUG: Trying direct scraping...")
+                        r = requests.get(url, headers=scrape_headers, timeout=15)
+                        print(f"🔍 DEBUG: Direct scraping status: {r.status_code}")
+                        
+                        if r.status_code == 200:
+                            # Look for meta tags
+                            soup = BeautifulSoup(r.text, 'lxml')
+                            
+                            # Twitter card images
+                            meta_props = ['twitter:image', 'twitter:image:src', 'og:image', 'og:image:url']
+                            for prop in meta_props:
+                                meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop}) or soup.find('meta', attrs={'property': prop})
+                                if meta:
+                                    content = meta.get('content')
+                                    print(f"🔍 DEBUG: Found meta {prop}: {content}")
+                                    if content and _is_image_like(content):
+                                        image_urls.append(content)
+                                        print(f"✅ DEBUG: Added meta image: {content}")
+                            
+                            print(f"🔍 DEBUG: After meta scraping - Images: {len(image_urls)}")
+                            
+                    except Exception as e:
+                        print(f"❌ DEBUG: Direct scraping failed: {e}")
+            else:
+                print(f"❌ DEBUG: No tweet ID found in URL")
         
-        # Reddit handler (unchanged)
-        elif 'reddit.com' in netloc or 'redd.it' in netloc:
-            json_url = _build_reddit_json_url(url)
-            try:
-                r = requests.get(json_url, headers=DEFAULT_HEADERS, timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    post_data = data[0]['data']['children'][0]['data']
-                    text_content = f"{post_data.get('title', '')} {post_data.get('selftext', '')}".strip()
-                    
-                    if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
-                        image_urls.append(post_data['url_overridden_by_dest'])
-                    
-                    if 'preview' in post_:
-                        for img in post_data['preview'].get('images', []):
-                            img_src = img['source']['url'].replace('&amp;', '&')
-                            if _is_image_like(img_src):
-                                image_urls.append(img_src)
-                    
-                    if 'media_metadata' in post_:
-                        for media_id in post_data['media_metadata']:
-                            media = post_data['media_metadata'][media_id]
-                            if media.get('e') == 'Image' and 's' in media:
-                                img_url = media['s']['u'].replace('&amp;', '&')
-                                if _is_image_like(img_url):
-                                    image_urls.append(img_url)
-                    
-                    print(f"Reddit extracted {len(image_urls)} images")
-            except Exception as e:
-                print(f"Reddit extraction failed: {e}")
-        
-        # Generic URL handler
         else:
+            print(f"🔍 DEBUG: Not a Twitter URL, using generic handler")
+            # Generic handler for other URLs...
             try:
                 r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15, allow_redirects=True)
                 r.raise_for_status()
