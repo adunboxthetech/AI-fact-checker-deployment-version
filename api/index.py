@@ -35,8 +35,10 @@ def extract_text_from_url(url):
         if parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
             # Strategy 1: Try Reddit JSON API with different user agents
             try:
-                # Convert to JSON URL
-                json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+                # Convert to JSON URL (prefer raw_json=1 to avoid HTML entities)
+                base_json = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+                sep = '&' if ('?' in base_json) else '?'
+                json_url = f"{base_json}{sep}raw_json=1"
                 
                 # Try multiple user agents to avoid blocking
                 user_agents = [
@@ -409,10 +411,12 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
             pass
     
     # Reddit
-    elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com"}:
+    elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
         try:
             # Prefer Reddit JSON for reliable media discovery
-            json_url = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+            base_json = url if url.endswith('.json') else (url.rstrip('/') + '.json')
+            sep = '&' if ('?' in base_json) else '?'
+            json_url = f"{base_json}{sep}raw_json=1"
             rj_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Accept": "application/json"
@@ -554,6 +558,7 @@ def extract_og_images(soup, parsed_url):
     
     # Open Graph images
     og_images = soup.find_all('meta', property='og:image')
+    og_images += soup.find_all('meta', property='og:image:secure_url')
     for og_img in og_images:
         src = og_img.get('content')
         if src:
@@ -900,6 +905,10 @@ def fact_check_url_with_images(url):
                         # Update the claim to reflect multimodal analysis
                         for result in image_data['fact_check_results']:
                             result['claim'] = f"Multimodal Analysis: Text + Image from {get_platform_name(url)}"
+                        # annotate response with image metadata
+                        image_data['images_detected'] = len(image_urls)
+                        image_data['selected_image_url'] = primary_image_url
+                        image_data['source_url'] = url
                         return image_data, 200
             except Exception as e:
                 # If multimodal analysis fails, fall back to text-only analysis
@@ -915,6 +924,8 @@ def fact_check_url_with_images(url):
                     if image_urls:
                         for result in text_data['fact_check_results']:
                             result['claim'] = f"Text Analysis (with {len(image_urls)} image(s) detected): {result.get('claim', 'Content Analysis')}"
+                    text_data['images_detected'] = len(image_urls)
+                    text_data['source_url'] = url
                     return text_data, 200
         
         # If no results, create a default response
