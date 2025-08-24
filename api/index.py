@@ -141,7 +141,10 @@ def _detect_images_in_text(text_content: str) -> dict:
             r'redditmedia\.com/[^\s]+',
             r'redditstatic\.com/[^\s]+',
             r'pbs\.twimg\.com/[^\s]+',
-            r'cdninstagram\.com/[^\s]+'
+            r'cdninstagram\.com/[^\s]+',
+            r'external-preview\.redd\.it/[^\s]+',
+            r'images\.redd\.it/[^\s]+',
+            r'media\.redd\.it/[^\s]+'
         ]
         
         has_images = any(re.search(pattern, text_content, re.IGNORECASE) for pattern in image_patterns)
@@ -165,6 +168,57 @@ def _detect_images_in_text(text_content: str) -> dict:
             "image_detected": False
         }
 
+def _detect_reddit_images_special(url: str, text_content: str) -> dict:
+    """Special detection for Reddit images that might not be in URL or text patterns."""
+    try:
+        # Check if this is a Reddit URL
+        if 'reddit.com' in url or 'redd.it' in url:
+            # Reddit posts often contain images even if not directly visible
+            # Check for common Reddit image indicators in text
+            reddit_image_indicators = [
+                r'\[.*?\]\(https?://[^\s]+\)',  # Reddit markdown image links
+                r'!\[.*?\]\(https?://[^\s]+\)',  # Reddit markdown image syntax
+                r'image',  # Mentions of images
+                r'photo',  # Mentions of photos
+                r'picture',  # Mentions of pictures
+                r'img',  # Mentions of img
+                r'gallery',  # Mentions of gallery
+                r'album',  # Mentions of album
+                r'\[img\]',  # BBCode image tags
+                r'\[/img\]',  # BBCode image closing tags
+                r'<img',  # HTML img tags
+                r'image post',  # Image post mentions
+                r'image submission',  # Image submission mentions
+                r'posted.*image',  # Posted image mentions
+                r'shared.*image',  # Shared image mentions
+                r'uploaded.*image',  # Uploaded image mentions
+            ]
+            
+            # Check if any of these indicators are present
+            has_indicators = any(re.search(pattern, text_content, re.IGNORECASE) for pattern in reddit_image_indicators)
+            
+            # Also check if the text is very short (likely an image post with minimal text)
+            is_likely_image_post = len(text_content.strip()) < 100 and any(word in text_content.lower() for word in ['image', 'photo', 'picture', 'img'])
+            
+            if has_indicators or is_likely_image_post:
+                return {
+                    "has_images": True,
+                    "message": "Images detected in this Reddit post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking.",
+                    "image_detected": True
+                }
+        
+        return {
+            "has_images": False,
+            "message": "",
+            "image_detected": False
+        }
+    except Exception:
+        return {
+            "has_images": False,
+            "message": "",
+            "image_detected": False
+        }
+
 def _detect_images_in_url(url: str) -> dict:
     """Detect if a URL contains images and provide appropriate messaging."""
     try:
@@ -176,7 +230,10 @@ def _detect_images_in_url(url: str) -> dict:
             r'imgur\.com',
             r'\.(jpg|jpeg|png|gif|webp|svg)',
             r'redditmedia\.com',
-            r'redditstatic\.com'
+            r'redditstatic\.com',
+            r'external-preview\.redd\.it',
+            r'images\.redd\.it',
+            r'media\.redd\.it'
         ]
         
         has_images = any(re.search(pattern, url, re.IGNORECASE) for pattern in image_patterns)
@@ -316,23 +373,33 @@ def extract_content_from_url(url: str) -> dict:
     # Check for images in both URL and text content
     url_image_detection = _detect_images_in_url(url)
     text_image_detection = _detect_images_in_text(text_content)
+    reddit_special_detection = _detect_reddit_images_special(url, text_content)
     
     # Debug information
     print(f"URL image detection: {url_image_detection}")
     print(f"Text image detection: {text_image_detection}")
+    print(f"Reddit special detection: {reddit_special_detection}")
     print(f"Extracted text content: {text_content[:200]}...")
     print(f"Final images found: {len(final_images)}")
     
-    # Combine detection results - if either detects images, mark as detected
+    # Combine detection results - if any method detects images, mark as detected
     combined_image_detection = {
-        "has_images": url_image_detection["has_images"] or text_image_detection["has_images"],
-        "image_detected": url_image_detection["image_detected"] or text_image_detection["image_detected"],
+        "has_images": url_image_detection["has_images"] or text_image_detection["has_images"] or reddit_special_detection["has_images"],
+        "image_detected": url_image_detection["image_detected"] or text_image_detection["image_detected"] or reddit_special_detection["image_detected"],
         "message": ""
     }
     
     # Set message if images were detected but not accessible
     if combined_image_detection["image_detected"] and len(final_images) == 0:
-        combined_image_detection["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
+        # Use the most specific message available
+        if reddit_special_detection["message"]:
+            combined_image_detection["message"] = reddit_special_detection["message"]
+        elif text_image_detection["message"]:
+            combined_image_detection["message"] = text_image_detection["message"]
+        elif url_image_detection["message"]:
+            combined_image_detection["message"] = url_image_detection["message"]
+        else:
+            combined_image_detection["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
 
     return {
         "text": text_content or "No text content found.",
