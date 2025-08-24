@@ -1,101 +1,109 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="light dark">
-    <title>AI Fact Checker - Verify Claims Instantly</title>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="style.css" rel="stylesheet">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-      // Apply saved or system theme before paint to avoid flash
-      (function() {
-        try {
-          const stored = localStorage.getItem('ai-fc-theme');
-          const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-          const theme = stored || (prefersDark ? 'dark' : 'light');
-          document.documentElement.setAttribute('data-theme', theme);
-        } catch (_) {}
-      })();
-    </script>
-    <style>
-      /* Prevent theme icon FOUC */
-      .icon-btn i { visibility: hidden; }
-    </style>
-    </head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <title>AI Fact Checker - Verify Claims Instantly</title>
+
+  <!-- Icons and fonts -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link href="style.css" rel="stylesheet" />
+
+  <script>
+    // Apply saved or system theme before paint to avoid flash
+    (function () {
+      try {
+        const stored = localStorage.getItem('ai-fc-theme');
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const theme = stored || (prefersDark ? 'dark' : 'light');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {}
+    })();
+  </script>
+
+  <style>
+    /* Prevent theme icon FOUC */
+    .icon-btn i { visibility: hidden; }
+  </style>
+</head>
 <body>
-    <div class="container">
-        <header class="header">
-            <div class="header-row">
-                <h1 class="app-title">
-                    <span class="brand-badge">
-                        <img src="assets/AD_logo.png" alt="Logo" class="brand-logo" loading="eager" onerror="this.onerror=null; this.src='assets/logo.png';"/>
-                    </span>
-                    AI Fact Checker
-                </h1>
-                <button id="themeToggle" class="icon-btn" aria-label="Toggle theme" title="Toggle light/dark">
-                    <i class="fas fa-moon"></i>
-                </button>
-            </div>
-            <div class="header-subtitles">
-                <p class="subtitle">Fact-check by pasting text or a link below.</p>
-                <p class="subtitle-hint">For image-based posts, please upload a screenshot.</p>
-            </div>
-        </header>
+  <div class="container">
+    <header class="header">
+      <div class="header-grid">
+        <span class="brand-badge">
+          <img src="assets/AD_logo.png" alt="Logo" class="brand-logo" loading="eager"
+               onerror="this.onerror=null; this.src='assets/logo.png';" />
+        </span>
 
-        <main class="main-content neumorphic">
-            <div class="input-section">
-                <textarea 
-                    id="textInput" 
-                    class="neumorphic-input"
-                    placeholder="Paste text or a URL (https://...) to fact-check its claims..."
-                    rows="6"
-                ></textarea>
-                <div class="hint">
-                    <span><i class="fas fa-keyboard"></i> Press Ctrl + Enter to fact-check</span>
-                </div>
+        <h1 class="app-title">AI Fact Checker</h1>
 
-                <div class="upload-section">
-                    <div id="imageDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload image">
-                        <input id="imageInput" type="file" accept="image/*" hidden />
-                        <div class="dz-content">
-                            <i class="fas fa-image"></i>
-                            <div>
-                                <div class="dz-title">Upload an image</div>
-                                <div class="dz-subtitle">Drop an image here, click to browse, or paste a URL above</div>
-                            </div>
-                        </div>
-                    </div>
-                    <div id="imagePreview" class="image-preview hidden"></div>
-                </div>
-                
-                <div class="button-group">
-                    <button id="factCheckBtn" class="primary-btn neu-btn">
-                        <i class="fas fa-magnifying-glass"></i>
-                        <span class="btn-label">Fact Check Now</span>
-                    </button>
-                    <button id="clearBtn" class="secondary-btn neu-btn">
-                        <i class="fas fa-eraser"></i>
-                        Clear
-                    </button>
-                </div>
+        <button id="themeToggle" class="icon-btn" aria-label="Toggle theme" title="Toggle light/dark">
+          <i class="fas fa-moon"></i>
+        </button>
+
+        <div class="header-subtitles">
+          <p class="subtitle">Fact-check by pasting text or a link below.</p>
+          <p class="subtitle-hint">For image-based posts, please upload a screenshot.</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content neumorphic">
+      <div class="input-section">
+        <textarea
+          id="textInput"
+          class="neumorphic-input"
+          placeholder="Paste text or a URL (https://...) to fact-check its claims..."
+          rows="6"
+        ></textarea>
+
+        <div class="hint">
+          <span><i class="fas fa-keyboard"></i> Press Ctrl + Enter to fact-check</span>
+        </div>
+
+        <div class="upload-section">
+          <div id="imageDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload image">
+            <input id="imageInput" type="file" accept="image/*" hidden />
+            <div class="dz-content">
+              <i class="fas fa-image"></i>
+              <div>
+                <div class="dz-title">Upload an image</div>
+                <div class="dz-subtitle">Drop an image here, click to browse, or paste a URL above</div>
+              </div>
             </div>
+          </div>
+          <div id="imagePreview" class="image-preview hidden"></div>
+        </div>
 
-            <div id="loadingSection" class="loading-section hidden">
-                <div class="spinner"></div>
-                <p>Analyzing claims and verifying with trusted sources...</p>
-            </div>
+        <div class="button-group">
+          <button id="factCheckBtn" class="primary-btn neu-btn">
+            <i class="fas fa-magnifying-glass"></i>
+            <span class="btn-label">Fact Check Now</span>
+          </button>
+          <button id="clearBtn" class="secondary-btn neu-btn">
+            <i class="fas fa-eraser"></i>
+            Clear
+          </button>
+        </div>
+      </div>
 
-            <div id="resultsSection" class="results-section hidden">
-                <h2>Fact-Check Results</h2>
-                <div id="resultsContainer"></div>
-            </div>
-        </main>
-    </div>
+      <div id="loadingSection" class="loading-section hidden">
+        <div class="spinner"></div>
+        <p>Analyzing claims and verifying with trusted sources...</p>
+      </div>
 
-    <script src="script.js?v=2"></script>
+      <div id="resultsSection" class="results-section hidden">
+        <h2>Fact-Check Results</h2>
+        <div id="resultsContainer"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="script.js?v=2"></script>
 </body>
 </html>
