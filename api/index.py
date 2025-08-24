@@ -81,7 +81,7 @@ def _is_image_like(url):
     return False
 
 def extract_content_from_url(url):
-    """Extract both text and images from social media URLs"""
+    """Enhanced content extraction with better Twitter handling"""
     parsed_url = urlparse(url)
     netloc = parsed_url.netloc
     text_content = ""
@@ -90,57 +90,142 @@ def extract_content_from_url(url):
     print(f"Extracting content from: {url}")
     
     try:
-        # Twitter/X handler
+        # Enhanced Twitter/X handler with multiple fallback strategies
         if 'twitter.com' in netloc or 'x.com' in netloc:
             match = re.search(r'/status/(\d+)', parsed_url.path)
             if match:
                 tweet_id = match.group(1)
                 print(f"Processing Twitter/X tweet ID: {tweet_id}")
                 
-                # Twitter syndication API
-                api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
+                # Method 1: Twitter syndication API
                 try:
-                    r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=10)
+                    api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
+                    r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=15)
                     if r.status_code == 200:
                         data = r.json()
-                        text_content = data.get('text', '')
-                        
-                        # Extract photos
-                        for photo in data.get('photos', []):
-                            img_url = photo.get('url')
-                            if img_url:
-                                image_urls.append(img_url)
-                                print(f"Found Twitter photo: {img_url}")
-                        
-                        # Extract video poster
-                        if data.get('video') and data['video'].get('poster'):
-                            image_urls.append(data['video']['poster'])
-                            print(f"Found Twitter video poster: {data['video']['poster']}")
-                        
-                        print(f"Twitter API extracted {len(image_urls)} images")
+                        # Check if we got actual tweet data, not error data
+                        if data.get('text') and 'something went wrong' not in data.get('text', '').lower():
+                            text_content = data.get('text', '')
+                            print(f"Twitter API success: {text_content[:100]}...")
+                            
+                            # Extract photos
+                            for photo in data.get('photos', []):
+                                img_url = photo.get('url')
+                                if img_url:
+                                    image_urls.append(img_url)
+                                    print(f"Found Twitter photo: {img_url}")
+                            
+                            # Extract video poster
+                            if data.get('video') and data['video'].get('poster'):
+                                image_urls.append(data['video']['poster'])
+                        else:
+                            print("Twitter API returned error content, trying fallbacks...")
                 except Exception as e:
-                    print(f"Twitter API failed: {e}")
+                    print(f"Twitter syndication API failed: {e}")
                 
-                # Fallback to oEmbed
-                if not image_urls:
+                # Method 2: oEmbed API fallback (only if syndication failed)
+                if not text_content or 'something went wrong' in text_content.lower():
                     try:
                         oembed_url = f"https://publish.twitter.com/oembed?url={url}"
-                        r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=10)
+                        r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=15)
                         if r.status_code == 200:
                             oembed_data = r.json()
                             html_content = oembed_data.get('html', '')
                             if html_content:
                                 soup = BeautifulSoup(html_content, 'lxml')
+                                # Extract text from blockquote or p tags
+                                text_elements = soup.find_all(['blockquote', 'p'])
+                                extracted_text = ' '.join([elem.get_text(strip=True) for elem in text_elements])
+                                if extracted_text and 'something went wrong' not in extracted_text.lower():
+                                    text_content = extracted_text
+                                    print(f"oEmbed success: {text_content[:100]}...")
+                                
+                                # Extract images
                                 for img in soup.find_all('img'):
                                     src = img.get('src')
                                     if src and _is_image_like(src):
                                         image_urls.append(src)
                                         print(f"Found oEmbed image: {src}")
-                                print(f"Twitter oEmbed extracted {len(image_urls)} images")
                     except Exception as e:
                         print(f"Twitter oEmbed failed: {e}")
+                
+                # Method 3: Nitter fallback (privacy-focused Twitter frontend)
+                if not text_content or 'something went wrong' in text_content.lower():
+                    try:
+                        # Try nitter instances
+                        nitter_instances = ['nitter.net', 'nitter.it', 'nitter.privacy.com.de']
+                        for instance in nitter_instances:
+                            try:
+                                nitter_url = url.replace('twitter.com', instance).replace('x.com', instance)
+                                r = requests.get(nitter_url, headers=DEFAULT_HEADERS, timeout=10)
+                                if r.status_code == 200:
+                                    soup = BeautifulSoup(r.text, 'lxml')
+                                    
+                                    # Look for tweet content in nitter's structure
+                                    tweet_content = soup.find('div', class_='tweet-content')
+                                    if tweet_content:
+                                        text_content = tweet_content.get_text(strip=True)
+                                        print(f"Nitter success: {text_content[:100]}...")
+                                        
+                                        # Look for images
+                                        for img in soup.find_all('img'):
+                                            src = img.get('src')
+                                            if src and _is_image_like(src):
+                                                # Convert nitter image URLs to Twitter URLs
+                                                if src.startswith('/pic/'):
+                                                    twitter_img_url = f"https://pbs.twimg.com/media/{src.split('/')[-1]}"
+                                                    image_urls.append(twitter_img_url)
+                                                elif src.startswith('http'):
+                                                    image_urls.append(src)
+                                        break
+                            except Exception as e:
+                                print(f"Nitter instance {instance} failed: {e}")
+                                continue
+                    except Exception as e:
+                        print(f"Nitter fallback failed: {e}")
+                
+                # Method 4: Direct scraping with better headers (last resort)
+                if not text_content or 'something went wrong' in text_content.lower():
+                    try:
+                        twitter_headers = {
+                            **DEFAULT_HEADERS,
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                            "Accept-Language": "en-US,en;q=0.9",
+                            "Cache-Control": "no-cache",
+                            "Pragma": "no-cache",
+                            "Sec-Fetch-Dest": "document",
+                            "Sec-Fetch-Mode": "navigate",
+                            "Sec-Fetch-Site": "none",
+                            "Sec-Fetch-User": "?1"
+                        }
+                        
+                        r = requests.get(url, headers=twitter_headers, timeout=15)
+                        if r.status_code == 200:
+                            soup = BeautifulSoup(r.text, 'lxml')
+                            
+                            # Look for tweet content in various possible structures
+                            selectors = [
+                                'div[data-testid="tweetText"]',
+                                'div[lang]',
+                                '[data-testid="tweet"] div[lang]',
+                                '.tweet-text',
+                                '[role="article"] div[lang]'
+                            ]
+                            
+                            for selector in selectors:
+                                elements = soup.select(selector)
+                                for element in elements:
+                                    candidate_text = element.get_text(strip=True)
+                                    if candidate_text and len(candidate_text) > 10 and 'something went wrong' not in candidate_text.lower():
+                                        text_content = candidate_text
+                                        print(f"Direct scraping success: {text_content[:100]}...")
+                                        break
+                                if text_content:
+                                    break
+                    except Exception as e:
+                        print(f"Direct Twitter scraping failed: {e}")
         
-        # Reddit handler
+        # Reddit handler (unchanged)
         elif 'reddit.com' in netloc or 'redd.it' in netloc:
             json_url = _build_reddit_json_url(url)
             try:
@@ -154,14 +239,12 @@ def extract_content_from_url(url):
                     if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
                         image_urls.append(post_data['url_overridden_by_dest'])
                     
-                    # Reddit preview images
                     if 'preview' in post_:
                         for img in post_data['preview'].get('images', []):
                             img_src = img['source']['url'].replace('&amp;', '&')
                             if _is_image_like(img_src):
                                 image_urls.append(img_src)
                     
-                    # Reddit media metadata
                     if 'media_metadata' in post_:
                         for media_id in post_data['media_metadata']:
                             media = post_data['media_metadata'][media_id]
@@ -174,43 +257,33 @@ def extract_content_from_url(url):
             except Exception as e:
                 print(f"Reddit extraction failed: {e}")
         
-        # Generic URL handler
-        if not text_content or len(image_urls) == 0:
+        # Generic URL handler (for other sites)
+        else:
             try:
                 enhanced_headers = {
                     **DEFAULT_HEADERS,
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "none",
-                    "Cache-Control": "no-cache"
                 }
                 
                 r = requests.get(url, headers=enhanced_headers, timeout=15, allow_redirects=True)
                 r.raise_for_status()
                 html = r.text
-                print(f"Generic scraper got {len(html)} chars of HTML")
                 
                 # Extract text content
-                if not text_content:
-                    doc = Document(html)
-                    text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
-                    if len(text_content) < 150:
-                        text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+                doc = Document(html)
+                text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
+                if len(text_content) < 150:
+                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
                 
                 # Extract images
                 soup = BeautifulSoup(html, 'lxml')
-                
-                # Meta tags for social media images
                 for prop in ['og:image', 'og:image:secure_url', 'twitter:image', 'twitter:image:src']:
                     meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
                     if meta and meta.get('content'):
                         img_url = _resolve_url(url, meta['content'])
                         if img_url and _is_image_like(img_url):
                             image_urls.append(img_url)
-                            print(f"Found meta image: {img_url}")
                 
-                # All img tags
                 for img in soup.find_all('img'):
                     for attr in ['src', 'data-src', 'data-lazy-src', 'data-original']:
                         src = img.get(attr)
@@ -219,7 +292,6 @@ def extract_content_from_url(url):
                             if resolved_url and _is_image_like(resolved_url):
                                 if not any(skip in resolved_url.lower() for skip in ['avatar', 'profile', 'icon', 'logo', 'badge']):
                                     image_urls.append(resolved_url)
-                                    print(f"Found img tag: {resolved_url}")
                 
                 print(f"Generic extraction found {len(image_urls)} images")
             except Exception as e:
@@ -230,12 +302,29 @@ def extract_content_from_url(url):
         print(f"Overall extraction failed: {e}")
         return {"text": f"Extraction failed: {e}", "image_urls": []}
     
+    # Final validation - reject obviously wrong content
+    if text_content:
+        # Filter out common error messages that shouldn't be fact-checked
+        error_phrases = [
+            'something went wrong',
+            'try again',
+            'privacy related extensions',
+            'please disable them',
+            'rate limit exceeded',
+            'this tweet is unavailable',
+            'tweet not found'
+        ]
+        
+        if any(phrase in text_content.lower() for phrase in error_phrases):
+            print(f"Detected error content, rejecting: {text_content[:100]}...")
+            text_content = "Unable to extract tweet content - may be private or deleted"
+    
     # Clean up text
     text_content = ' '.join(text_content.split())
     if len(text_content) > 12000:
         text_content = text_content[:12000] + '…'
     
-    # Deduplicate and prioritize images
+    # Deduplicate images
     unique_images = []
     seen = set()
     for img_url in image_urls:
@@ -243,22 +332,15 @@ def extract_content_from_url(url):
             unique_images.append(img_url)
             seen.add(img_url)
     
-    # Sort by priority
-    def image_priority(img_url):
-        if 'pbs.twimg.com' in img_url:
-            return 0
-        elif 'pic.twitter.com' in img_url:
-            return 1
-        elif any(host in img_url for host in ['i.redd.it', 'i.imgur.com']):
-            return 2
-        else:
-            return 3
+    final_images = sorted(unique_images, key=lambda x: (
+        0 if 'pbs.twimg.com' in x else
+        1 if 'pic.twitter.com' in x else
+        2 if any(host in x for host in ['i.redd.it', 'i.imgur.com']) else 3
+    ))[:5]
     
-    final_images = sorted(unique_images, key=image_priority)[:5]  # Limit to 5 images
-    
-    print(f"Final result: {len(final_images)} images extracted")
-    for i, img in enumerate(final_images):
-        print(f"  {i+1}: {img}")
+    print(f"Final extraction result:")
+    print(f"  Text: {text_content[:200]}...")
+    print(f"  Images: {len(final_images)}")
     
     return {
         "text": text_content or "No text content found.",
