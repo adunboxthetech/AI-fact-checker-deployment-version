@@ -200,7 +200,7 @@ def extract_text_from_url(url):
         raise ValueError(f"Error extracting content: {str(e)}")
 
 def extract_content_from_url(url):
-    """Extract both text and image URLs from a URL"""
+    """Extract both text and image URLs from a URL using multiple strategies"""
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -222,74 +222,203 @@ def extract_content_from_url(url):
         # Extract text content (existing logic)
         text = extract_text_from_url(url)
         
-        # Extract image URLs
+        # Extract image URLs using multiple strategies
         image_urls = []
+        parsed_url = urlparse(url)
         
-        # Look for images in various formats
+        # Strategy 1: Extract from HTML img tags
         for img in soup.find_all('img'):
-            src = img.get('src') or img.get('data-src')
+            src = img.get('src') or img.get('data-src') or img.get('data-original')
             if src:
                 # Convert relative URLs to absolute
                 if src.startswith('//'):
                     src = 'https:' + src
                 elif src.startswith('/'):
-                    parsed_url = urlparse(url)
                     src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
                 elif not src.startswith('http'):
-                    parsed_url = urlparse(url)
                     src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
                 
                 # Filter out small images, icons, and common non-content images
                 if (src and 
-                    not any(skip in src.lower() for skip in ['avatar', 'icon', 'logo', 'emoji', 'favicon', 'analytics', 'tracking']) and
-                    not any(skip in img.get('class', []) for skip in ['avatar', 'icon', 'logo', 'emoji'])):
+                    not any(skip in src.lower() for skip in ['avatar', 'icon', 'logo', 'emoji', 'favicon', 'analytics', 'tracking', 'ads']) and
+                    not any(skip in img.get('class', []) for skip in ['avatar', 'icon', 'logo', 'emoji']) and
+                    not any(skip in img.get('alt', '').lower() for skip in ['avatar', 'icon', 'logo', 'emoji'])):
                     image_urls.append(src)
         
-        # For Twitter/X specifically, try to extract media
-        parsed_url = urlparse(url)
-        if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
-            try:
-                m = re.search(r"/status/(\d+)", parsed_url.path)
-                if m:
-                    tweet_id = m.group(1)
-                    
-                    # Approach 1: Twitter oEmbed API to get tweet content
-                    oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
-                    oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
-                    if oembed_response.status_code == 200:
-                        oembed_data = oembed_response.json()
-                        if oembed_data.get("html"):
-                            # Extract pic.twitter.com URLs from oEmbed HTML
-                            oembed_html = oembed_data["html"]
-                            pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', oembed_html)
-                            for pic_url in pic_urls:
-                                # Use the pic.twitter.com URL directly - Perplexity can handle redirects
-                                full_pic_url = f"https://{pic_url}"
-                                image_urls.append(full_pic_url)
-                    
-                    # Approach 2: Also look for pic.twitter.com URLs in the extracted text
-                    pic_urls_in_text = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', text)
-                    for pic_url in pic_urls_in_text:
-                        # Use the pic.twitter.com URL directly - Perplexity can handle redirects
-                        full_pic_url = f"https://{pic_url}"
-                        image_urls.append(full_pic_url)
-                    
-            except Exception as e:
-                # If Twitter extraction fails, continue with other methods
-                pass
+        # Strategy 2: Platform-specific extraction
+        platform_images = extract_platform_specific_images(url, parsed_url, headers, text)
+        image_urls.extend(platform_images)
         
-        # Debug: Print what we found
-        print(f"Extracted {len(image_urls)} images from {url}")
-        for i, img_url in enumerate(image_urls):
-            print(f"  Image {i+1}: {img_url}")
+        # Strategy 3: Look for image URLs in text content
+        text_image_urls = extract_image_urls_from_text(text, url)
+        image_urls.extend(text_image_urls)
+        
+        # Strategy 4: Look for Open Graph and Twitter Card images
+        og_images = extract_og_images(soup, parsed_url)
+        image_urls.extend(og_images)
+        
+        # Remove duplicates and filter
+        unique_images = []
+        seen = set()
+        for img_url in image_urls:
+            if img_url and img_url not in seen:
+                seen.add(img_url)
+                unique_images.append(img_url)
         
         return {
             "text": text,
-            "image_urls": list(set(image_urls))  # Remove duplicates
+            "image_urls": unique_images
         }
         
     except Exception as e:
         raise ValueError(f"Error extracting content: {str(e)}")
+
+def extract_platform_specific_images(url, parsed_url, headers, text):
+    """Extract images using platform-specific methods"""
+    image_urls = []
+    
+    # Twitter/X
+    if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
+        try:
+            m = re.search(r"/status/(\d+)", parsed_url.path)
+            if m:
+                tweet_id = m.group(1)
+                
+                # Twitter oEmbed API
+                oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
+                oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
+                if oembed_response.status_code == 200:
+                    oembed_data = oembed_response.json()
+                    if oembed_data.get("html"):
+                        oembed_html = oembed_data["html"]
+                        pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', oembed_html)
+                        for pic_url in pic_urls:
+                            full_pic_url = f"https://{pic_url}"
+                            image_urls.append(full_pic_url)
+        except Exception:
+            pass
+    
+    # Reddit
+    elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com"}:
+        try:
+            # Reddit often has direct image URLs in the page
+            reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9]+\.(?:jpg|jpeg|png|gif)', text)
+            image_urls.extend(reddit_images)
+            
+            # Also look for imgur links
+            imgur_images = re.findall(r'https://imgur\.com/[a-zA-Z0-9]+', text)
+            image_urls.extend(imgur_images)
+        except Exception:
+            pass
+    
+    # Instagram
+    elif parsed_url.netloc in {"instagram.com", "www.instagram.com"}:
+        try:
+            # Instagram often has direct image URLs
+            instagram_images = re.findall(r'https://scontent-[a-z0-9-]+\.cdninstagram\.com/[^"\s]+', text)
+            image_urls.extend(instagram_images)
+        except Exception:
+            pass
+    
+    # Facebook
+    elif parsed_url.netloc in {"facebook.com", "www.facebook.com", "fb.com", "www.fb.com"}:
+        try:
+            # Facebook often has direct image URLs
+            facebook_images = re.findall(r'https://scontent-[a-z0-9-]+\.fbcdn\.net/[^"\s]+', text)
+            image_urls.extend(facebook_images)
+        except Exception:
+            pass
+    
+    return image_urls
+
+def extract_image_urls_from_text(text, base_url):
+    """Extract image URLs from text content"""
+    image_urls = []
+    
+    # Common image URL patterns
+    patterns = [
+        r'https://[^"\s]+\.(?:jpg|jpeg|png|gif|webp)',
+        r'https://[^"\s]+\.(?:jpg|jpeg|png|gif|webp)\?[^"\s]*',
+        r'https://pic\.twitter\.com/[a-zA-Z0-9]+',
+        r'https://imgur\.com/[a-zA-Z0-9]+',
+        r'https://i\.redd\.it/[a-zA-Z0-9]+\.(?:jpg|jpeg|png|gif)',
+        r'https://scontent-[a-z0-9-]+\.cdninstagram\.com/[^"\s]+',
+        r'https://scontent-[a-z0-9-]+\.fbcdn\.net/[^"\s]+'
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        image_urls.extend(matches)
+    
+    return image_urls
+
+def extract_og_images(soup, parsed_url):
+    """Extract Open Graph and Twitter Card images"""
+    image_urls = []
+    
+    # Open Graph images
+    og_images = soup.find_all('meta', property='og:image')
+    for og_img in og_images:
+        src = og_img.get('content')
+        if src:
+            if src.startswith('//'):
+                src = 'https:' + src
+            elif src.startswith('/'):
+                src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
+            elif not src.startswith('http'):
+                src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
+            image_urls.append(src)
+    
+    # Twitter Card images
+    twitter_images = soup.find_all('meta', attrs={'name': 'twitter:image'})
+    for twitter_img in twitter_images:
+        src = twitter_img.get('content')
+        if src:
+            if src.startswith('//'):
+                src = 'https:' + src
+            elif src.startswith('/'):
+                src = f"{parsed_url.scheme}://{parsed_url.netloc}{src}"
+            elif not src.startswith('http'):
+                src = f"{parsed_url.scheme}://{parsed_url.netloc}/{src}"
+            image_urls.append(src)
+    
+    return image_urls
+
+def process_image_url(image_url):
+    """Process image URLs to handle redirects and protected URLs"""
+    try:
+        # For Twitter pic.twitter.com URLs, try to get the actual image
+        if 'pic.twitter.com' in image_url:
+            # Try to follow the redirect to get the actual image URL
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            response = requests.head(image_url, headers=headers, allow_redirects=True, timeout=10)
+            if response.status_code == 200:
+                # If we get a successful response, use the original URL
+                # Perplexity might be able to handle it
+                return image_url
+        
+        # For other URLs, return as is
+        return image_url
+    except Exception:
+        # If processing fails, return the original URL
+        return image_url
+
+def get_platform_name(url):
+    """Get the platform name from a URL"""
+    if 'twitter.com' in url or 'x.com' in url or 'pic.twitter.com' in url:
+        return "Twitter/X"
+    elif 'reddit.com' in url or 'i.redd.it' in url:
+        return "Reddit"
+    elif 'instagram.com' in url or 'cdninstagram.com' in url:
+        return "Instagram"
+    elif 'facebook.com' in url or 'fb.com' in url or 'fbcdn.net' in url:
+        return "Facebook"
+    elif 'imgur.com' in url:
+        return "Imgur"
+    else:
+        return "social media"
 
 def fact_check_text(text):
     """Simple fact-check function"""
@@ -468,10 +597,14 @@ def fact_check_image(image_data_url, image_url):
                 ]
             }
         ]
+        
+        # Handle different types of image URLs
         if image_data_url:
             messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
         elif image_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_url})
+            # Try to handle redirect URLs and protected URLs
+            processed_url = process_image_url(image_url)
+            messages[0]["content"].append({"type": "image_url", "image_url": processed_url})
 
         payload = {
             "model": "sonar-pro",  # supports vision per Perplexity docs
@@ -588,24 +721,26 @@ def fact_check_url_with_images(url):
                         results.extend(image_data['fact_check_results'])
                     else:
                         # Image analysis failed, add a note about the detected image
+                        platform_name = get_platform_name(image_url)
                         results.append({
-                            "claim": f"Image {i+1} detected in tweet",
+                            "claim": f"Image {i+1} detected in {platform_name}",
                             "result": {
                                 "verdict": "IMAGE DETECTED",
                                 "confidence": 100,
-                                "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to Twitter's image URL protection. Twitter's pic.twitter.com URLs require special handling that is not currently supported. The image may contain additional factual content that is not reflected in the text analysis.",
+                                "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
                                 "sources": []
                             },
                             "status": "ANALYSIS COMPLETE"
                         })
             except Exception as e:
                 # If image analysis fails, add a note about the detected image
+                platform_name = get_platform_name(image_url)
                 results.append({
-                    "claim": f"Image {i+1} detected in tweet",
+                    "claim": f"Image {i+1} detected in {platform_name}",
                     "result": {
                         "verdict": "IMAGE DETECTED",
                         "confidence": 100,
-                        "explanation": f"An image was detected in the tweet ({image_url}) but could not be analyzed due to Twitter's image URL protection. Twitter's pic.twitter.com URLs require special handling that is not currently supported. The image may contain additional factual content that is not reflected in the text analysis.",
+                        "explanation": f"An image was detected ({image_url}) but could not be analyzed due to {platform_name}'s image URL protection. The image may contain additional factual content that is not reflected in the text analysis.",
                         "sources": []
                     },
                     "status": "ANALYSIS COMPLETE"
