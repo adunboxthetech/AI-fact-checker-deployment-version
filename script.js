@@ -166,7 +166,7 @@ class FactCheckerApp {
                 const payload = { image_data_url: this.imageDataUrl };
                 console.log('Payload size:', JSON.stringify(payload).length, 'characters');
                 
-                const url = `${this.apiUrl}/api/fact-check-image`;
+                const url = `${this.apiUrl}/fact-check-image`;
                 console.log('Calling URL:', url);
                 console.log('API URL base:', this.apiUrl);
                 
