@@ -248,52 +248,36 @@ def extract_content_from_url(url):
         # For Twitter/X specifically, try to extract media
         parsed_url = urlparse(url)
         if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
-            # Also look for pic.twitter.com URLs in the text content
-            pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', text)
-            for pic_url in pic_urls:
-                full_pic_url = f"https://{pic_url}"
-                image_urls.append(full_pic_url)
-            # Try to extract media from Twitter oEmbed
             try:
                 m = re.search(r"/status/(\d+)", parsed_url.path)
                 if m:
                     tweet_id = m.group(1)
                     
-                    # Try multiple approaches to get Twitter media
-                    
-                    # Approach 1: Twitter oEmbed API
+                    # Approach 1: Twitter oEmbed API to get tweet content
                     oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
                     oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
                     if oembed_response.status_code == 200:
                         oembed_data = oembed_response.json()
                         if oembed_data.get("html"):
-                            # Extract image URLs from oEmbed HTML
-                            oembed_soup = BeautifulSoup(oembed_data["html"], "lxml")
-                            for img in oembed_soup.find_all('img'):
-                                src = img.get('src')
-                                if src and ('media' in src or 'twimg' in src):
-                                    image_urls.append(src)
+                            # Extract pic.twitter.com URLs from oEmbed HTML
+                            oembed_html = oembed_data["html"]
+                            pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', oembed_html)
+                            for pic_url in pic_urls:
+                                # Convert pic.twitter.com URL to actual image URL
+                                # pic.twitter.com/vHH5nMStg9 -> https://pbs.twimg.com/media/vHH5nMStg9.jpg
+                                image_id = pic_url.split('/')[-1]
+                                actual_image_url = f"https://pbs.twimg.com/media/{image_id}.jpg"
+                                image_urls.append(actual_image_url)
                     
-                    # Approach 2: Try to extract from the main page content
-                    for img in soup.find_all('img'):
-                        src = img.get('src') or img.get('data-src')
-                        if src and ('media' in src or 'twimg' in src or 'pic.twitter.com' in src):
-                            # Convert relative URLs to absolute
-                            if src.startswith('//'):
-                                src = 'https:' + src
-                            elif src.startswith('/'):
-                                src = f"https://{parsed_url.netloc}{src}"
-                            elif not src.startswith('http'):
-                                src = f"https://{parsed_url.netloc}/{src}"
-                            image_urls.append(src)
-                    
-                    # Approach 3: Try to construct media URL from tweet ID
-                    # Twitter media URLs often follow this pattern
-                    media_url = f"https://pbs.twimg.com/media/{tweet_id}.jpg"
-                    # We'll try this as a fallback, but won't add it to the list yet
+                    # Approach 2: Also look for pic.twitter.com URLs in the extracted text
+                    pic_urls_in_text = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', text)
+                    for pic_url in pic_urls_in_text:
+                        image_id = pic_url.split('/')[-1]
+                        actual_image_url = f"https://pbs.twimg.com/media/{image_id}.jpg"
+                        image_urls.append(actual_image_url)
                     
             except Exception as e:
-                print(f"Twitter media extraction failed: {str(e)}")
+                # If Twitter extraction fails, continue with other methods
                 pass
         
         # Debug: Print what we found
@@ -594,28 +578,18 @@ def fact_check_url_with_images(url):
                     results.extend(text_data['fact_check_results'])
         
         # Then, fact-check each image
-        print(f"Found {len(image_urls)} images to analyze")
         for i, image_url in enumerate(image_urls[:3]):  # Limit to first 3 images
-            print(f"Analyzing image {i+1}: {image_url}")
             try:
                 image_result = fact_check_image("", image_url)
-                print(f"Image {i+1} result: {image_result}")
                 if isinstance(image_result, tuple):
                     image_data, image_status = image_result
-                    print(f"Image {i+1} status: {image_status}")
                     if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
                         # Update claim to indicate it's from an image
                         for result in image_data['fact_check_results']:
                             result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
                         results.extend(image_data['fact_check_results'])
-                        print(f"Added {len(image_data['fact_check_results'])} image results")
-                    else:
-                        print(f"Image {i+1} data structure invalid: {image_data}")
-                else:
-                    print(f"Image {i+1} result not a tuple: {image_result}")
             except Exception as e:
                 # If image analysis fails, continue with other images
-                print(f"Image analysis failed for {image_url}: {str(e)}")
                 continue
         
         if not results:
