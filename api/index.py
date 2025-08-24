@@ -248,11 +248,20 @@ def extract_content_from_url(url):
         # For Twitter/X specifically, try to extract media
         parsed_url = urlparse(url)
         if parsed_url.netloc in {"x.com", "www.x.com", "twitter.com", "www.twitter.com"} and "/status/" in parsed_url.path:
+            # Also look for pic.twitter.com URLs in the text content
+            pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', text)
+            for pic_url in pic_urls:
+                full_pic_url = f"https://{pic_url}"
+                image_urls.append(full_pic_url)
             # Try to extract media from Twitter oEmbed
             try:
                 m = re.search(r"/status/(\d+)", parsed_url.path)
                 if m:
                     tweet_id = m.group(1)
+                    
+                    # Try multiple approaches to get Twitter media
+                    
+                    # Approach 1: Twitter oEmbed API
                     oembed_url = f"https://publish.twitter.com/oembed?url=https://twitter.com/i/status/{tweet_id}&omit_script=true"
                     oembed_response = requests.get(oembed_url, headers=headers, timeout=12)
                     if oembed_response.status_code == 200:
@@ -262,10 +271,35 @@ def extract_content_from_url(url):
                             oembed_soup = BeautifulSoup(oembed_data["html"], "lxml")
                             for img in oembed_soup.find_all('img'):
                                 src = img.get('src')
-                                if src and 'media' in src:
+                                if src and ('media' in src or 'twimg' in src):
                                     image_urls.append(src)
-            except Exception:
+                    
+                    # Approach 2: Try to extract from the main page content
+                    for img in soup.find_all('img'):
+                        src = img.get('src') or img.get('data-src')
+                        if src and ('media' in src or 'twimg' in src or 'pic.twitter.com' in src):
+                            # Convert relative URLs to absolute
+                            if src.startswith('//'):
+                                src = 'https:' + src
+                            elif src.startswith('/'):
+                                src = f"https://{parsed_url.netloc}{src}"
+                            elif not src.startswith('http'):
+                                src = f"https://{parsed_url.netloc}/{src}"
+                            image_urls.append(src)
+                    
+                    # Approach 3: Try to construct media URL from tweet ID
+                    # Twitter media URLs often follow this pattern
+                    media_url = f"https://pbs.twimg.com/media/{tweet_id}.jpg"
+                    # We'll try this as a fallback, but won't add it to the list yet
+                    
+            except Exception as e:
+                print(f"Twitter media extraction failed: {str(e)}")
                 pass
+        
+        # Debug: Print what we found
+        print(f"Extracted {len(image_urls)} images from {url}")
+        for i, img_url in enumerate(image_urls):
+            print(f"  Image {i+1}: {img_url}")
         
         return {
             "text": text,
