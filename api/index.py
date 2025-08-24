@@ -357,7 +357,9 @@ def fact_check_image(image_data_url, image_url):
                 "content": [
                     {"type": "text", "text": (
                         "Analyze this image. Extract all factual claims that a third-party could verify. "
-                        "Return ONLY the claims as a numbered list."
+                        "If the image contains text, quotes, statistics, dates, names, or any verifiable statements, list them as numbered claims. "
+                        "If the image is purely visual (art, abstract, decorative) with no factual content, respond with 'No factual claims found in this image.' "
+                        "Return ONLY the claims as a numbered list, or the 'No factual claims' message if applicable."
                     )}
                 ]
             }
@@ -378,10 +380,47 @@ def fact_check_image(image_data_url, image_url):
             return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
 
         content = sonar_resp.json()['choices'][0]['message']['content']
+        
+        # Check if the image contains any factual claims
+        if "no factual claims" in content.lower() or "no claims" in content.lower() or "nothing to fact-check" in content.lower():
+            return {
+                "fact_check_results": [{
+                    "claim": "Image Analysis",
+                    "result": {
+                        "verdict": "NO FACTUAL CLAIMS",
+                        "confidence": 100,
+                        "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
+                        "sources": []
+                    }
+                }],
+                "claims_found": 0,
+                "timestamp": time.time(),
+                "source_url": image_url if image_url else None
+            }, 200
+        
         # Convert numbered list into claims
         claims = [line.strip() for line in content.split('\n') if line.strip() and any(c.isdigit() for c in line[:3])]
         if not claims:
-            claims = [content.strip()]
+            # If no numbered list found, try to extract meaningful content
+            lines = [line.strip() for line in content.split('\n') if line.strip()]
+            if lines:
+                claims = [lines[0]]  # Take the first meaningful line
+            else:
+                # If still no content, return no claims found
+                return {
+                    "fact_check_results": [{
+                        "claim": "Image Analysis",
+                        "result": {
+                            "verdict": "NO FACTUAL CLAIMS",
+                            "confidence": 100,
+                            "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
+                            "sources": []
+                        }
+                    }],
+                    "claims_found": 0,
+                    "timestamp": time.time(),
+                    "source_url": image_url if image_url else None
+                }, 200
 
         # Fact-check each claim via existing pipeline
         results = []
