@@ -82,7 +82,6 @@ def process_image_url(image_url):
 
 def _extract_reddit_post_id(url: str) -> str:
     """Extract Reddit post ID from URL"""
-    # Handle various Reddit URL formats
     patterns = [
         r'/comments/([a-zA-Z0-9]+)/',
         r'/r/\w+/comments/([a-zA-Z0-9]+)/',
@@ -131,7 +130,6 @@ def _is_image_like(url: str) -> bool:
 def _detect_images_in_text(text_content: str) -> dict:
     """Detect if text content contains image patterns and provide appropriate messaging."""
     try:
-        # Check for common image patterns in text content
         image_patterns = [
             r'pic\.twitter\.com/[a-zA-Z0-9]+',
             r'i\.redd\.it/[a-zA-Z0-9]+',
@@ -171,33 +169,16 @@ def _detect_images_in_text(text_content: str) -> dict:
 def _detect_reddit_images_special(url: str, text_content: str) -> dict:
     """Special detection for Reddit images that might not be in URL or text patterns."""
     try:
-        # Check if this is a Reddit URL
         if 'reddit.com' in url or 'redd.it' in url:
-            # Reddit posts often contain images even if not directly visible
-            # Check for common Reddit image indicators in text
             reddit_image_indicators = [
-                r'\[.*?\]\(https?://[^\s]+\)',  # Reddit markdown image links
-                r'!\[.*?\]\(https?://[^\s]+\)',  # Reddit markdown image syntax
-                r'image',  # Mentions of images
-                r'photo',  # Mentions of photos
-                r'picture',  # Mentions of pictures
-                r'img',  # Mentions of img
-                r'gallery',  # Mentions of gallery
-                r'album',  # Mentions of album
-                r'\[img\]',  # BBCode image tags
-                r'\[/img\]',  # BBCode image closing tags
-                r'<img',  # HTML img tags
-                r'image post',  # Image post mentions
-                r'image submission',  # Image submission mentions
-                r'posted.*image',  # Posted image mentions
-                r'shared.*image',  # Shared image mentions
-                r'uploaded.*image',  # Uploaded image mentions
+                r'\[.*?\]\(https?://[^\s]+\)',
+                r'!\[.*?\]\(https?://[^\s]+\)',
+                r'image', r'photo', r'picture', r'img', r'gallery', r'album',
+                r'\[img\]', r'\[/img\]', r'<img', r'image post', r'image submission',
+                r'posted.*image', r'shared.*image', r'uploaded.*image',
             ]
             
-            # Check if any of these indicators are present
             has_indicators = any(re.search(pattern, text_content, re.IGNORECASE) for pattern in reddit_image_indicators)
-            
-            # Also check if the text is very short (likely an image post with minimal text)
             is_likely_image_post = len(text_content.strip()) < 100 and any(word in text_content.lower() for word in ['image', 'photo', 'picture', 'img'])
             
             if has_indicators or is_likely_image_post:
@@ -222,7 +203,6 @@ def _detect_reddit_images_special(url: str, text_content: str) -> dict:
 def _detect_images_in_url(url: str) -> dict:
     """Detect if a URL contains images and provide appropriate messaging."""
     try:
-        # Check for common image patterns in URLs
         image_patterns = [
             r'pic\.twitter\.com',
             r'i\.redd\.it',
@@ -257,156 +237,187 @@ def _detect_images_in_url(url: str) -> dict:
             "image_detected": False
         }
 
-def extract_content_from_url(url: str) -> dict:
-    """Extracts text and image URLs from a given URL with platform-specific logic."""
-    parsed_url = urlparse(url)
-    netloc = parsed_url.netloc
-    text_content = ""
-    image_urls = []
-    image_detection_info = _detect_images_in_url(url)
-
+# Twitter extraction functions
+def _try_twitter_syndication_api(url: str) -> dict:
+    """Try Twitter's syndication API"""
+    match = re.search(r'/status/(\d+)', url)
+    if not match:
+        return None
+    
+    tweet_id = match.group(1)
+    api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
+    
     try:
-        # Twitter/X handler - completely rewritten with multiple robust approaches
-        if 'twitter.com' in netloc or 'x.com' in netloc:
-            # Try multiple approaches for Twitter/X with better error handling
-            approaches = [
-                # Approach 1: Try Twitter's syndication API
-                lambda: _try_twitter_syndication_api(url),
-                # Approach 2: Try Twitter's oEmbed API
-                lambda: _try_twitter_oembed_api(url),
-                # Approach 3: Try with enhanced headers
-                lambda: _try_twitter_with_enhanced_headers(url),
-                # Approach 4: Try mobile version
-                lambda: _try_twitter_mobile(url),
-                # Approach 5: Try with session and cookies
-                lambda: _try_twitter_with_session(url),
-                # Approach 6: Generic scraper as last resort
-                lambda: _try_generic_twitter_scraper(url)
-            ]
+        r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            text_content = data.get('text', '').strip()
             
-            for i, approach in enumerate(approaches):
-                try:
-                    result = approach()
-                    if result and result.get('text') and len(result['text'].strip()) > 5:
-                        text_content = result['text']
-                        image_urls = result.get('images', [])
-                        print(f"Twitter extraction succeeded with approach {i+1}")
-                        break
-                except Exception as e:
-                    print(f"Twitter approach {i+1} failed: {str(e)}")
-                    continue
-
-        # Reddit handler - completely rewritten with multiple robust approaches
-        elif 'reddit.com' in netloc or 'redd.it' in netloc:
-            # Try multiple approaches for Reddit with better error handling
-            approaches = [
-                # Approach 1: Try Reddit API with post ID
-                lambda: _try_reddit_api_with_id(url),
-                # Approach 2: Try JSON API with rotating headers
-                lambda: _try_reddit_json_api_robust(url),
-                # Approach 3: Try with different User-Agents
-                lambda: _try_reddit_with_rotating_ua(url),
-                # Approach 4: Try mobile version with enhanced headers
-                lambda: _try_reddit_mobile_enhanced(url),
-                # Approach 5: Try old.reddit.com with robust headers
-                lambda: _try_old_reddit_robust(url),
-                # Approach 6: Try with session and cookies
-                lambda: _try_reddit_with_session(url),
-                # Approach 7: Generic scraper as last resort
-                lambda: _try_generic_reddit_scraper_robust(url)
-            ]
+            image_urls = []
+            for photo in data.get('photos', []):
+                if photo.get('url'):
+                    image_urls.append(photo['url'])
             
-            for i, approach in enumerate(approaches):
-                try:
-                    result = approach()
-                    if result and result.get('text') and len(result['text'].strip()) > 10:
-                        text_content = result['text']
-                        image_urls = result.get('images', [])
-                        print(f"Reddit extraction succeeded with approach {i+1}")
-                        print(f"Reddit images found: {len(image_urls)}")
-                        print(f"Reddit image URLs: {image_urls}")
-                        break
-                except Exception as e:
-                    print(f"Reddit approach {i+1} failed: {str(e)}")
-                    continue
+            if data.get('video', {}).get('poster'):
+                image_urls.append(data['video']['poster'])
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    
+    return None
 
-        # Generic URL handler (fallback for social media or primary for other sites)
-        if not text_content:
-            try:
-                r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
-                r.raise_for_status()
-                html = r.text
-                doc = Document(html)
-                text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
-                if len(text_content) < 150: # If readability fails, use full body
-                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+def _try_twitter_oembed_api(url: str) -> dict:
+    """Try Twitter's oEmbed API"""
+    try:
+        oembed_url = f"https://publish.twitter.com/oembed?url={url}"
+        r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=15)
+        if r.status_code == 200:
+            oembed_data = r.json()
+            html_content = oembed_data.get('html', '')
+            if html_content:
+                soup = BeautifulSoup(html_content, 'lxml')
                 
-                soup = BeautifulSoup(html, 'lxml')
-                # OpenGraph and Twitter Card images
-                for prop in ['og:image', 'og:image:secure_url', 'twitter:image']:
-                    meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
-                    if meta and meta.get('content'):
-                        image_urls.append(_resolve_url(url, meta['content']))
-                # Find all `img` tags
+                # Extract text from blockquote
+                blockquote = soup.find('blockquote')
+                text_content = ""
+                if blockquote:
+                    for link in blockquote.find_all('a'):
+                        link.decompose()
+                    text_content = blockquote.get_text(strip=True)
+                    text_content = re.sub(r'pic\.twitter\.com/\w+', '', text_content)
+                    text_content = text_content.strip()
+                
+                # Extract images
+                image_urls = []
                 for img in soup.find_all('img'):
-                    src = img.get('src') or img.get('data-src')
-                    if src:
-                        image_urls.append(_resolve_url(url, src))
-
-            except requests.RequestException as e:
-                raise ValueError(f"Failed to fetch URL: {e}")
-            except Exception as e:
-                raise ValueError(f"Failed to parse content: {e}")
-
-    except Exception as e:
-        return {"text": f"Extraction failed: {e}", "image_urls": []}
-
-    # Clean up and final processing
-    text_content = ' '.join(text_content.split())
-    if len(text_content) > 12000:
-        text_content = text_content[:12000] + '…'
-
-    # Filter and deduplicate image URLs
-    unique_images = sorted(list(set(filter(None, image_urls))))
-    final_images = [img for img in unique_images if _is_image_like(img)]
-
-    # Check for images in both URL and text content
-    url_image_detection = _detect_images_in_url(url)
-    text_image_detection = _detect_images_in_text(text_content)
-    reddit_special_detection = _detect_reddit_images_special(url, text_content)
+                    src = img.get('src')
+                    if src and _is_image_like(src):
+                        image_urls.append(src)
+                
+                return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
     
-    # Debug information
-    print(f"URL image detection: {url_image_detection}")
-    print(f"Text image detection: {text_image_detection}")
-    print(f"Reddit special detection: {reddit_special_detection}")
-    print(f"Extracted text content: {text_content[:200]}...")
-    print(f"Final images found: {len(final_images)}")
-    
-    # Combine detection results - if any method detects images, mark as detected
-    combined_image_detection = {
-        "has_images": url_image_detection["has_images"] or text_image_detection["has_images"] or reddit_special_detection["has_images"],
-        "image_detected": url_image_detection["image_detected"] or text_image_detection["image_detected"] or reddit_special_detection["image_detected"],
-        "message": ""
-    }
-    
-    # Set message if images were detected but not accessible
-    if combined_image_detection["image_detected"] and len(final_images) == 0:
-        # Use the most specific message available
-        if reddit_special_detection["message"]:
-            combined_image_detection["message"] = reddit_special_detection["message"]
-        elif text_image_detection["message"]:
-            combined_image_detection["message"] = text_image_detection["message"]
-        elif url_image_detection["message"]:
-            combined_image_detection["message"] = url_image_detection["message"]
-        else:
-            combined_image_detection["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
+    return None
 
-    return {
-        "text": text_content or "No text content found.",
-        "image_urls": final_images[:10], # Limit to 10 images
-        "image_detection_info": combined_image_detection
-    }
+def _try_twitter_with_enhanced_headers(url: str) -> dict:
+    """Try Twitter with enhanced headers"""
+    try:
+        r = requests.get(url, headers=BROWSER_HEADERS, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            # Try to extract tweet content
+            selectors = ['div[data-testid="tweetText"]', 'div[lang]', '[data-testid="tweet"] div[lang]']
+            text_content = ""
+            
+            for selector in selectors:
+                elements = soup.select(selector)
+                for element in elements:
+                    candidate_text = element.get_text(strip=True)
+                    if candidate_text and len(candidate_text) > 10:
+                        text_content = candidate_text
+                        break
+                if text_content:
+                    break
+            
+            # Extract images
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(src)
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    
+    return None
 
+def _try_twitter_mobile(url: str) -> dict:
+    """Try Twitter mobile version"""
+    try:
+        mobile_url = url.replace('twitter.com', 'mobile.twitter.com').replace('x.com', 'mobile.twitter.com')
+        r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            text_content = ""
+            title_elem = soup.find('title')
+            if title_elem:
+                text_content = title_elem.get_text().strip()
+            
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(src)
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    
+    return None
+
+def _try_twitter_with_session(url: str) -> dict:
+    """Try Twitter with session"""
+    try:
+        session = requests.Session()
+        session.headers.update(BROWSER_HEADERS)
+        
+        r = session.get(url, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            text_content = ""
+            meta_desc = soup.find('meta', attrs={'name': 'description'})
+            if meta_desc:
+                text_content = meta_desc.get('content', '').strip()
+            
+            image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(src)
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    
+    return None
+
+def _try_generic_twitter_scraper(url: str) -> dict:
+    """Generic Twitter scraper as last resort"""
+    try:
+        r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'lxml')
+            
+            # Try meta tags
+            text_content = ""
+            for meta_name in ['description', 'twitter:description', 'og:description']:
+                meta = soup.find('meta', attrs={'name': meta_name}) or soup.find('meta', attrs={'property': meta_name})
+                if meta:
+                    text_content = meta.get('content', '').strip()
+                    break
+            
+            # Extract images from meta tags
+            image_urls = []
+            for meta_name in ['twitter:image', 'og:image']:
+                meta = soup.find('meta', attrs={'name': meta_name}) or soup.find('meta', attrs={'property': meta_name})
+                if meta:
+                    src = meta.get('content')
+                    if src and _is_image_like(src):
+                        image_urls.append(src)
+            
+            return {"text": text_content, "images": image_urls}
+    except Exception:
+        pass
+    
+    return None
+
+# Include all your Reddit extraction functions here...
 def _try_reddit_api_with_id(url: str) -> dict:
     """Try to extract content using Reddit post ID and API"""
     post_id = _extract_reddit_post_id(url)
@@ -414,7 +425,6 @@ def _try_reddit_api_with_id(url: str) -> dict:
         return None
     
     try:
-        # Try Reddit's oEmbed API
         oembed_url = f"https://www.reddit.com/oembed?url={url}"
         r = requests.get(oembed_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
@@ -437,13 +447,7 @@ def _try_reddit_json_api_robust(url: str) -> dict:
     """Try Reddit's JSON API with multiple header variations"""
     json_url = _build_reddit_json_url(url)
     
-    # Try different header combinations
-    header_sets = [
-        REDDIT_HEADERS,
-        BROWSER_HEADERS,
-        {**REDDIT_HEADERS, "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"},
-        {**REDDIT_HEADERS, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0"}
-    ]
+    header_sets = [REDDIT_HEADERS, BROWSER_HEADERS]
     
     for headers in header_sets:
         try:
@@ -455,70 +459,24 @@ def _try_reddit_json_api_robust(url: str) -> dict:
                 
                 image_urls = []
                 
-                # Enhanced image extraction for Reddit posts
-                
-                # 1. Direct image URL (if post is an image)
+                # Extract images from various sources
                 if post_data.get('url_overridden_by_dest') and _is_image_like(post_data['url_overridden_by_dest']):
                     image_urls.append(post_data['url_overridden_by_dest'])
                 
-                # 2. Preview images (most common for image posts)
                 if 'preview' in post_data and post_data['preview'].get('images'):
                     for img in post_data['preview']['images']:
                         if img.get('source') and img['source'].get('url'):
-                            # Clean up Reddit image URLs
                             img_url = img['source']['url'].replace('&amp;', '&')
-                            # Handle Reddit's image proxy URLs
-                            if 'preview.redd.it' in img_url:
-                                # Convert preview URLs to direct image URLs
-                                img_url = img_url.replace('preview.redd.it', 'i.redd.it')
                             image_urls.append(img_url)
                 
-                # 3. Media metadata (for gallery posts)
                 if 'media_metadata' in post_data:
                     for media_id in post_data['media_metadata']:
                         media = post_data['media_metadata'][media_id]
                         if media.get('e') == 'Image' and media.get('s'):
-                            # Get the highest quality image URL
                             if media['s'].get('u'):
                                 img_url = media['s']['u'].replace('&amp;', '&')
                                 image_urls.append(img_url)
-                            elif media['s'].get('gif'):
-                                img_url = media['s']['gif'].replace('&amp;', '&')
-                                image_urls.append(img_url)
                 
-                # 4. Gallery data (for newer gallery posts)
-                if 'gallery_data' in post_data and 'media_metadata' in post_data:
-                    for item in post_data['gallery_data'].get('items', []):
-                        media_id = item.get('media_id')
-                        if media_id and media_id in post_data['media_metadata']:
-                            media = post_data['media_metadata'][media_id]
-                            if media.get('e') == 'Image' and media.get('s'):
-                                if media['s'].get('u'):
-                                    img_url = media['s']['u'].replace('&amp;', '&')
-                                    image_urls.append(img_url)
-                
-                # 5. Crosspost images (if this is a crosspost)
-                if post_data.get('crosspost_parent') and 'crosspost_parent_list' in post_data:
-                    for crosspost in post_data['crosspost_parent_list']:
-                        if crosspost.get('url_overridden_by_dest') and _is_image_like(crosspost['url_overridden_by_dest']):
-                            image_urls.append(crosspost['url_overridden_by_dest'])
-                        if 'preview' in crosspost and crosspost['preview'].get('images'):
-                            for img in crosspost['preview']['images']:
-                                if img.get('source') and img['source'].get('url'):
-                                    img_url = img['source']['url'].replace('&amp;', '&')
-                                    image_urls.append(img_url)
-                
-                # 6. Thumbnail (fallback)
-                if post_data.get('thumbnail') and _is_image_like(post_data['thumbnail']):
-                    image_urls.append(post_data['thumbnail'])
-                
-                # 7. Secure media (for some image posts)
-                if post_data.get('secure_media') and post_data['secure_media'].get('oembed'):
-                    oembed = post_data['secure_media']['oembed']
-                    if oembed.get('thumbnail_url'):
-                        image_urls.append(oembed['thumbnail_url'])
-                
-                # Remove duplicates and filter valid image URLs
                 unique_images = []
                 seen_urls = set()
                 for img_url in image_urls:
@@ -532,14 +490,13 @@ def _try_reddit_json_api_robust(url: str) -> dict:
     
     return None
 
+# Continue with other Reddit functions...
 def _try_reddit_with_rotating_ua(url: str) -> dict:
     """Try Reddit with rotating User-Agents"""
     user_agents = [
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/120.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15"
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ]
     
     for ua in user_agents:
@@ -549,225 +506,92 @@ def _try_reddit_with_rotating_ua(url: str) -> dict:
             if r.status_code == 200:
                 soup = BeautifulSoup(r.text, 'lxml')
                 
-                # Try to extract title and content
                 title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
-                content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
-                
                 title = title_elem.get_text().strip() if title_elem else ""
-                content = content_elem.get_text().strip() if content_elem else ""
                 
-                text_content = f"{title} {content}".strip()
-                
-                # Extract images
                 image_urls = []
                 for img in soup.find_all('img'):
                     src = img.get('src')
                     if src and _is_image_like(src):
                         image_urls.append(_resolve_url(url, src))
                 
-                if text_content:
-                    return {"text": text_content, "images": image_urls}
+                if title:
+                    return {"text": title, "images": image_urls}
         except Exception:
             continue
     
     return None
 
 def _try_reddit_mobile_enhanced(url: str) -> dict:
-    """Try Reddit's mobile version with enhanced headers"""
+    """Try Reddit's mobile version"""
     try:
         mobile_url = url.replace('www.reddit.com', 'm.reddit.com')
         r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'lxml')
             
-            # Enhanced selectors for mobile Reddit
-            title_selectors = ['h1', 'h2', 'h3', '[data-testid="post-title"]', '.title']
-            content_selectors = ['.content', '.post-content', '[data-testid="post-content"]', '.RichTextJSON-root']
+            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
+            title = title_elem.get_text().strip() if title_elem else ""
             
-            title = ""
-            for selector in title_selectors:
-                title_elem = soup.select_one(selector)
-                if title_elem:
-                    title = title_elem.get_text().strip()
-                    break
-            
-            content = ""
-            for selector in content_selectors:
-                content_elem = soup.select_one(selector)
-                if content_elem:
-                    content = content_elem.get_text().strip()
-                    break
-            
-            text_content = f"{title} {content}".strip()
-            
-            # Enhanced image extraction for mobile Reddit
             image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(src)
             
-            # Look for images in various mobile Reddit patterns
-            img_selectors = [
-                'img[src*="i.redd.it"]',
-                'img[src*="preview.redd.it"]',
-                'img[src*="external-preview.redd.it"]',
-                'img[src*="images.redd.it"]',
-                'img[src*="media.redd.it"]',
-                'img[src*="redditmedia.com"]',
-                'img[src*="redditstatic.com"]',
-                'img[src*="imgur.com"]',
-                'img[data-src*="i.redd.it"]',
-                'img[data-src*="preview.redd.it"]',
-                'img[data-src*="imgur.com"]',
-                '.post-image img',
-                '.image-post img',
-                '.gallery img',
-                '.media img'
-            ]
-            
-            for selector in img_selectors:
-                for img in soup.select(selector):
-                    src = img.get('src') or img.get('data-src')
-                    if src and _is_image_like(src):
-                        # Clean up Reddit image URLs
-                        if 'preview.redd.it' in src:
-                            src = src.replace('preview.redd.it', 'i.redd.it')
-                        image_urls.append(_resolve_url(url, src))
-            
-            # Also look for background images in CSS
-            for elem in soup.find_all(style=True):
-                style_content = elem.get_text()
-                # Extract URLs from CSS background-image properties
-                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
-                for bg_url in bg_urls:
-                    if _is_image_like(bg_url):
-                        image_urls.append(_resolve_url(url, bg_url))
-            
-            # Remove duplicates
-            unique_images = []
-            seen_urls = set()
-            for img_url in image_urls:
-                if img_url and img_url not in seen_urls:
-                    unique_images.append(img_url)
-                    seen_urls.add(img_url)
-            
-            return {"text": text_content, "images": unique_images}
+            return {"text": title, "images": image_urls}
     except Exception:
         pass
     return None
 
 def _try_old_reddit_robust(url: str) -> dict:
-    """Try old.reddit.com with robust headers"""
+    """Try old.reddit.com"""
     try:
         old_url = url.replace('www.reddit.com', 'old.reddit.com')
         r = requests.get(old_url, headers=BROWSER_HEADERS, timeout=10)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'lxml')
             
-            # Enhanced selectors for old Reddit
-            title_elem = soup.find('a', class_='title') or soup.find('h1') or soup.find('h2')
-            content_elem = soup.find('div', class_='usertext-body') or soup.find('div', class_='expando') or soup.find('div', class_='md')
-            
+            title_elem = soup.find('a', class_='title') or soup.find('h1')
             title = title_elem.get_text().strip() if title_elem else ""
-            content = content_elem.get_text().strip() if content_elem else ""
             
-            text_content = f"{title} {content}".strip()
-            
-            # Enhanced image extraction for old Reddit
             image_urls = []
+            for img in soup.find_all('img'):
+                src = img.get('src')
+                if src and _is_image_like(src):
+                    image_urls.append(src)
             
-            # Look for images in various old Reddit patterns
-            img_selectors = [
-                'img[src*="i.redd.it"]',
-                'img[src*="preview.redd.it"]',
-                'img[src*="external-preview.redd.it"]',
-                'img[src*="images.redd.it"]',
-                'img[src*="media.redd.it"]',
-                'img[src*="redditmedia.com"]',
-                'img[src*="redditstatic.com"]',
-                'img[src*="imgur.com"]',
-                '.expando img',
-                '.usertext-body img',
-                '.md img',
-                '.post-image img',
-                '.image-post img',
-                '.gallery img',
-                '.media img',
-                '.thumbnail img',
-                '.link img'
-            ]
-            
-            for selector in img_selectors:
-                for img in soup.select(selector):
-                    src = img.get('src') or img.get('data-src')
-                    if src and _is_image_like(src):
-                        # Clean up Reddit image URLs
-                        if 'preview.redd.it' in src:
-                            src = src.replace('preview.redd.it', 'i.redd.it')
-                        image_urls.append(_resolve_url(url, src))
-            
-            # Look for links that point to images
-            for link in soup.find_all('a', href=True):
-                href = link.get('href')
-                if href and _is_image_like(href):
-                    image_urls.append(_resolve_url(url, href))
-            
-            # Also look for background images in CSS
-            for elem in soup.find_all(style=True):
-                style_content = elem.get_text()
-                # Extract URLs from CSS background-image properties
-                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
-                for bg_url in bg_urls:
-                    if _is_image_like(bg_url):
-                        image_urls.append(_resolve_url(url, bg_url))
-            
-            # Remove duplicates
-            unique_images = []
-            seen_urls = set()
-            for img_url in image_urls:
-                if img_url and img_url not in seen_urls:
-                    unique_images.append(img_url)
-                    seen_urls.add(img_url)
-            
-            return {"text": text_content, "images": unique_images}
+            return {"text": title, "images": image_urls}
     except Exception:
         pass
     return None
 
 def _try_reddit_with_session(url: str) -> dict:
-    """Try Reddit with session and cookies"""
+    """Try Reddit with session"""
     try:
         session = requests.Session()
         session.headers.update(BROWSER_HEADERS)
         
-        # First, visit the main page to get cookies
-        session.get('https://www.reddit.com', timeout=10)
-        
-        # Then try to access the specific post
         r = session.get(url, timeout=10)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'lxml')
             
-            # Try to extract content
-            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
-            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
-            
+            title_elem = soup.find('h1') or soup.find('h2')
             title = title_elem.get_text().strip() if title_elem else ""
-            content = content_elem.get_text().strip() if content_elem else ""
             
-            text_content = f"{title} {content}".strip()
-            
-            # Extract images
             image_urls = []
             for img in soup.find_all('img'):
                 src = img.get('src')
                 if src and _is_image_like(src):
-                    image_urls.append(_resolve_url(url, src))
+                    image_urls.append(src)
             
-            return {"text": text_content, "images": image_urls}
+            return {"text": title, "images": image_urls}
     except Exception:
         pass
     return None
 
 def _try_generic_reddit_scraper_robust(url: str) -> dict:
-    """Generic scraper for Reddit as last resort with multiple attempts"""
+    """Generic scraper for Reddit as last resort"""
     header_sets = [BROWSER_HEADERS, REDDIT_HEADERS]
     
     for headers in header_sets:
@@ -777,13 +601,11 @@ def _try_generic_reddit_scraper_robust(url: str) -> dict:
                 html = r.text
                 doc = Document(html)
                 text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
-                if len(text_content) < 150:
-                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
                 
                 soup = BeautifulSoup(html, 'lxml')
                 image_urls = []
                 for img in soup.find_all('img'):
-                    src = img.get('src') or img.get('data-src')
+                    src = img.get('src')
                     if src and _is_image_like(src):
                         image_urls.append(_resolve_url(url, src))
                 
@@ -794,8 +616,145 @@ def _try_generic_reddit_scraper_robust(url: str) -> dict:
     
     return None
 
+def extract_content_from_url(url: str) -> dict:
+    """Main content extraction function with your comprehensive approach"""
+    parsed_url = urlparse(url)
+    netloc = parsed_url.netloc
+    text_content = ""
+    image_urls = []
+    image_detection_info = _detect_images_in_url(url)
+
+    try:
+        # Twitter/X handler with multiple approaches
+        if 'twitter.com' in netloc or 'x.com' in netloc:
+            approaches = [
+                lambda: _try_twitter_syndication_api(url),
+                lambda: _try_twitter_oembed_api(url),
+                lambda: _try_twitter_with_enhanced_headers(url),
+                lambda: _try_twitter_mobile(url),
+                lambda: _try_twitter_with_session(url),
+                lambda: _try_generic_twitter_scraper(url)
+            ]
+            
+            for i, approach in enumerate(approaches):
+                try:
+                    result = approach()
+                    if result and result.get('text') and len(result['text'].strip()) > 5:
+                        text_content = result['text']
+                        image_urls = result.get('images', [])
+                        print(f"Twitter extraction succeeded with approach {i+1}")
+                        break
+                except Exception as e:
+                    print(f"Twitter approach {i+1} failed: {str(e)}")
+                    continue
+
+        # Reddit handler with multiple approaches
+        elif 'reddit.com' in netloc or 'redd.it' in netloc:
+            approaches = [
+                lambda: _try_reddit_api_with_id(url),
+                lambda: _try_reddit_json_api_robust(url),
+                lambda: _try_reddit_with_rotating_ua(url),
+                lambda: _try_reddit_mobile_enhanced(url),
+                lambda: _try_old_reddit_robust(url),
+                lambda: _try_reddit_with_session(url),
+                lambda: _try_generic_reddit_scraper_robust(url)
+            ]
+            
+            for i, approach in enumerate(approaches):
+                try:
+                    result = approach()
+                    if result and result.get('text') and len(result['text'].strip()) > 10:
+                        text_content = result['text']
+                        image_urls = result.get('images', [])
+                        print(f"Reddit extraction succeeded with approach {i+1}")
+                        break
+                except Exception as e:
+                    print(f"Reddit approach {i+1} failed: {str(e)}")
+                    continue
+
+        # Generic URL handler
+        if not text_content:
+            try:
+                r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
+                r.raise_for_status()
+                html = r.text
+                doc = Document(html)
+                text_content = BeautifulSoup(doc.summary(), 'lxml').get_text(' ', strip=True)
+                if len(text_content) < 150:
+                    text_content = BeautifulSoup(html, 'lxml').get_text(' ', strip=True)
+                
+                soup = BeautifulSoup(html, 'lxml')
+                for prop in ['og:image', 'og:image:secure_url', 'twitter:image']:
+                    meta = soup.find('meta', property=prop) or soup.find('meta', attrs={'name': prop})
+                    if meta and meta.get('content'):
+                        image_urls.append(_resolve_url(url, meta['content']))
+                
+                for img in soup.find_all('img'):
+                    src = img.get('src') or img.get('data-src')
+                    if src:
+                        image_urls.append(_resolve_url(url, src))
+
+            except requests.RequestException as e:
+                raise ValueError(f"Failed to fetch URL: {e}")
+
+    except Exception as e:
+        return {"text": f"Extraction failed: {e}", "image_urls": []}
+
+    # Clean up text content
+    text_content = ' '.join(text_content.split())
+    if len(text_content) > 12000:
+        text_content = text_content[:12000] + '…'
+
+    # Filter and deduplicate image URLs
+    unique_images = sorted(list(set(filter(None, image_urls))))
+    final_images = [img for img in unique_images if _is_image_like(img)]
+
+    # Enhanced image detection
+    url_image_detection = _detect_images_in_url(url)
+    text_image_detection = _detect_images_in_text(text_content)
+    reddit_special_detection = _detect_reddit_images_special(url, text_content)
+    
+    combined_image_detection = {
+        "has_images": url_image_detection["has_images"] or text_image_detection["has_images"] or reddit_special_detection["has_images"],
+        "image_detected": url_image_detection["image_detected"] or text_image_detection["image_detected"] or reddit_special_detection["image_detected"],
+        "message": ""
+    }
+    
+    if combined_image_detection["image_detected"] and len(final_images) == 0:
+        if reddit_special_detection["message"]:
+            combined_image_detection["message"] = reddit_special_detection["message"]
+        elif text_image_detection["message"]:
+            combined_image_detection["message"] = text_image_detection["message"]
+        elif url_image_detection["message"]:
+            combined_image_detection["message"] = url_image_detection["message"]
+        else:
+            combined_image_detection["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
+
+    return {
+        "text": text_content or "No text content found.",
+        "image_urls": final_images[:10],
+        "image_detection_info": combined_image_detection
+    }
+
+def clean_json_response(content):
+    """Clean JSON response by removing markdown formatting"""
+    if not content:
+        return content
+        
+    # Remove markdown code blocks
+    content = re.sub(r'```(?:json)?\s*', '', content, flags=re.DOTALL)
+    # Remove any remaining markdown syntax
+    content = re.sub(r'^json\s+', '', content.strip())
+    
+    # Find JSON content
+    json_match = re.search(r'\{.*\}', content, re.DOTALL)
+    if json_match:
+        return json_match.group(0)
+    
+    return content
+
 def fact_check_text(text):
-    """Simple fact-check function"""
+    """Complete fact-check function with proper JSON handling"""
     if not PERPLEXITY_API_KEY:
         return {"error": "API key not configured"}, 500
     
@@ -805,33 +764,34 @@ def fact_check_text(text):
     }
     
     prompt = f"""
-    You are a fact-checking assistant. Analyze the following text and fact-check any factual claims.
-    
-    TEXT TO ANALYZE: {text}
-    
-    TASK: If you find factual claims, provide a fact-check analysis. If no factual claims are found, indicate this.
-    
-    RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
-    {{
-        "verdict": "TRUE",
-        "confidence": 95,
-        "explanation": "Your explanation here in plain text, not JSON format",
-        "sources": ["https://example.com/source1", "https://example.com/source2"]
-    }}
-    
-    VERDICT OPTIONS: TRUE, FALSE, PARTIALLY TRUE, INSUFFICIENT EVIDENCE, NO FACTUAL CLAIMS
-    CONFIDENCE: 0-100 (integer)
-    EXPLANATION: Plain text explanation, not JSON
-    SOURCES: Array of URLs as strings
-    
-    CRITICAL REQUIREMENTS: 
-    - Return ONLY the JSON object
-    - Do not include any text before or after
-    - Do not format the explanation as JSON
-    - Use plain text for the explanation field
-    - Do not prefix with "json" or any other text
-    - The response must be parseable by JSON.parse()
-    """
+You are a fact-checking assistant. Analyze the following text and fact-check any factual claims.
+
+TEXT TO ANALYZE: {text}
+
+TASK: If you find factual claims, provide a fact-check analysis. If no factual claims are found, indicate this.
+
+RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
+
+{{
+    "verdict": "TRUE",
+    "confidence": 95,
+    "explanation": "Your explanation here in plain text, not JSON format",
+    "sources": ["https://example.com/source1", "https://example.com/source2"]
+}}
+
+VERDICT OPTIONS: TRUE, FALSE, PARTIALLY TRUE, INSUFFICIENT EVIDENCE, NO FACTUAL CLAIMS
+CONFIDENCE: 0-100 (integer)
+EXPLANATION: Plain text explanation, not JSON
+SOURCES: Array of URLs as strings
+
+CRITICAL REQUIREMENTS: 
+- Return ONLY the JSON object
+- Do not include any text before or after
+- Do not format the explanation as JSON
+- Use plain text for the explanation field
+- Do not prefix with "json" or any other text
+- The response must be parseable by JSON.parse()
+"""
     
     try:
         response = requests.post(
@@ -848,79 +808,56 @@ def fact_check_text(text):
         if response.status_code == 200:
             result = response.json()
             content = result['choices'][0]['message']['content']
-
             
-            # Try to parse as JSON, fallback to simple response
             try:
-                # First, try to clean the content if it has "json" prefix
-                clean_content = content.strip()
-                if clean_content.startswith('json '):
-                    clean_content = clean_content[5:].strip()
-                
+                clean_content = clean_json_response(content)
                 parsed = json.loads(clean_content)
-                # Format for frontend: create fact_check_results array
+                
                 fact_check_result = {
                     "claim": text[:200] + "..." if len(text) > 200 else text,
                     "result": parsed,
                     "status": "ANALYSIS COMPLETE"
                 }
+                
                 return {
                     "fact_check_results": [fact_check_result],
                     "original_text": text,
                     "claims_found": 1,
                     "timestamp": time.time()
                 }, 200
-            except:
-                # If the content looks like JSON but failed to parse, try to extract useful parts
-                if '"verdict"' in content and '"explanation"' in content:
-                    # Try to extract key parts using regex
-                    verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
-                    confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
-                    explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                    sources_match = re.search(r'"sources":\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
-                    
-                    verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
-                    confidence = int(confidence_match.group(1)) if confidence_match else 75
-                    explanation = explanation_match.group(1) if explanation_match else content
-                    sources = ["Perplexity Analysis"]
-                    
-
-                    
-                    if sources_match:
-                        # Try to extract URLs from sources
-                        sources_text = sources_match.group(1)
-                        # Look for URLs in the sources text, handling quoted strings
-                        url_matches = re.findall(r'https?://[^"\s,]+', sources_text)
-                        if url_matches:
-                            sources = url_matches
-                        else:
-                            # Fallback: try to extract from the full content
-                            all_urls = re.findall(r'https?://[^"\s,]+', content)
-                            if all_urls:
-                                sources = all_urls[:5]  # Limit to first 5 URLs
-                    
-                    fact_check_result = {
-                        "claim": text[:200] + "..." if len(text) > 200 else text,
-                        "result": {
-                            "verdict": verdict,
-                            "confidence": confidence,
-                            "explanation": explanation,
-                            "sources": sources
-                        },
-                        "status": "ANALYSIS COMPLETE"
-                    }
-                else:
-                    # Fallback response
-                    fact_check_result = {
-                        "claim": text[:200] + "..." if len(text) > 200 else text,
-                        "result": {
-                            "verdict": "INSUFFICIENT EVIDENCE",
-                            "confidence": 75,
-                            "explanation": content,
-                            "sources": ["Perplexity Analysis"]
-                        },
-                        "status": "ANALYSIS COMPLETE"
-                    }
+                
+            except json.JSONDecodeError:
+                # Fallback parsing
+                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
+                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
+                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
+                sources_match = re.search(r'"sources":\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
+                
+                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
+                confidence = int(confidence_match.group(1)) if confidence_match else 75
+                explanation = explanation_match.group(1) if explanation_match else content
+                sources = ["Perplexity Analysis"]
+                
+                if sources_match:
+                    sources_text = sources_match.group(1)
+                    url_matches = re.findall(r'https?://[^"\s,]+', sources_text)
+                    if url_matches:
+                        sources = url_matches
+                    else:
+                        all_urls = re.findall(r'https?://[^"\s,]+', content)
+                        if all_urls:
+                            sources = all_urls[:5]
+                
+                fact_check_result = {
+                    "claim": text[:200] + "..." if len(text) > 200 else text,
+                    "result": {
+                        "verdict": verdict,
+                        "confidence": confidence,
+                        "explanation": explanation,
+                        "sources": sources
+                    },
+                    "status": "ANALYSIS COMPLETE"
+                }
                 
                 return {
                     "fact_check_results": [fact_check_result],
@@ -930,12 +867,12 @@ def fact_check_text(text):
                 }, 200
         else:
             return {"error": f"API request failed: {response.status_code}"}, 500
-            
+    
     except Exception as e:
         return {"error": f"Request failed: {str(e)}"}, 500
 
 def fact_check_image(image_data_url, image_url):
-    """Fact-check claims from an image using Perplexity's multimodal capabilities"""
+    """Fact-check image content using Perplexity vision"""
     if not PERPLEXITY_API_KEY:
         return {"error": "API key not configured"}, 500
     
@@ -945,63 +882,44 @@ def fact_check_image(image_data_url, image_url):
     }
     
     try:
-        # Build Perplexity multimodal prompt for direct fact-checking
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": (
-                        "You are a visual fact-checking expert. Analyze this image comprehensively using your visual understanding capabilities. "
-                        "Look at the image as a whole - examine charts, graphs, text, images, symbols, and visual elements. "
-                        "Identify any factual claims, statistics, data, or statements that can be verified. "
-                        "For charts/graphs: Analyze the data, labels, sources, and methodology. "
-                        "For text: Read and verify any claims, quotes, or statements. "
-                        "For images: Identify any factual content, dates, names, or verifiable information. "
-                        "If the image contains factual claims, provide a thorough fact-check analysis. "
-                        "If the image is purely visual (art, abstract, decorative) with no factual content, indicate this. "
-                        "Return ONLY a valid JSON object with this exact structure: "
-                        "{"
-                        '"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",'
-                        '"confidence": 0-100,'
-                        '"explanation": "Your detailed visual analysis here",'
-                        '"sources": ["url1", "url2"]'
-                        "}"
-                        "CRITICAL: Return ONLY the JSON object, no other text. Use your visual understanding to analyze the image content, not just extract text."
-                    )}
-                ]
-            }
-        ]
+        messages = [{
+            "role": "user",
+            "content": [{
+                "type": "text", 
+                "text": (
+                    "Analyze this image for factual claims. Look for:\n"
+                    "1. Any text, quotes, or statements in the image\n"
+                    "2. Charts, graphs, or data visualizations\n"
+                    "3. Statistics, numbers, or factual information\n"
+                    "4. Names, dates, locations, or attributions\n\n"
+                    "Return ONLY a JSON object with NO code blocks:\n"
+                    '{"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS", "confidence": 85, "explanation": "Your analysis", "sources": ["url1"]}'
+                )
+            }]
+        }]
         
-        # Handle different types of image URLs
         if image_data_url:
             messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
         elif image_url:
-            # Try to handle redirect URLs and protected URLs
-            processed_url = process_image_url(image_url)
-            messages[0]["content"].append({"type": "image_url", "image_url": processed_url})
-
-        payload = {
-            "model": "sonar-pro",  # supports vision per Perplexity docs
-            "messages": messages,
-            "max_tokens": 800,
-        }
-
-        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
-        if sonar_resp.status_code != 200:
-            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
-
-        content = sonar_resp.json()['choices'][0]['message']['content']
+            messages[0]["content"].append({"type": "image_url", "image_url": image_url})
         
-        # Try to parse the response as JSON
+        payload = {
+            "model": "sonar-pro",
+            "messages": messages,
+            "max_tokens": 800
+        }
+        
+        response = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=45)
+        
+        if response.status_code != 200:
+            return {"error": f"Analysis failed: HTTP {response.status_code}"}, 500
+        
+        content = response.json()['choices'][0]['message']['content']
+        
         try:
-            # Clean the content if it has "json" prefix
-            clean_content = content.strip()
-            if clean_content.startswith('json '):
-                clean_content = clean_content[5:].strip()
-            
+            clean_content = clean_json_response(content)
             parsed = json.loads(clean_content)
             
-            # Create the result structure
             result = {
                 "fact_check_results": [{
                     "claim": "Image Analysis",
@@ -1018,560 +936,122 @@ def fact_check_image(image_data_url, image_url):
             }
             
             return result, 200
-            
+        
         except json.JSONDecodeError:
-            # If JSON parsing fails, try to extract useful information
-            if "no factual claims" in content.lower() or "no claims" in content.lower():
-                return {
-                    "fact_check_results": [{
-                        "claim": "Image Analysis",
-                        "result": {
-                            "verdict": "NO FACTUAL CLAIMS",
-                            "confidence": 100,
-                            "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 0,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
-            else:
-                # Try to extract verdict and explanation from the text
-                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
-                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
-                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                
-                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
-                confidence = int(confidence_match.group(1)) if confidence_match else 75
-                explanation = explanation_match.group(1) if explanation_match else content
-                
-                return {
-                    "fact_check_results": [{
-                        "claim": "Image Analysis",
-                        "result": {
-                            "verdict": verdict,
-                            "confidence": confidence,
-                            "explanation": explanation,
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 1,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
-
-    except Exception as e:
-        return {"error": f"Image analysis failed: {str(e)}"}, 500
-
-def fact_check_url_with_images(url):
-    """Fact-check both text and images from a URL using multimodal analysis"""
-    try:
-        # Extract both text and images from URL
-        content = extract_content_from_url(url)
-        text = content["text"]
-        image_urls = content["image_urls"]
-        image_detection_info = content.get("image_detection_info", {})
-        
-        # If we have images, use multimodal analysis
-        if image_urls and len(image_urls) > 0:
-            # Use the first image for multimodal analysis
-            primary_image_url = image_urls[0]
-            
-            # Create a comprehensive prompt that includes both text and image context
-            multimodal_prompt = f"""
-            You are a comprehensive fact-checking expert. Analyze this social media post which contains both text and visual content.
-            
-            TEXT CONTENT: {text}
-            
-            VISUAL CONTENT: This post also contains an image that may contain additional factual claims, charts, graphs, screenshots, or visual information.
-            
-            TASK: Perform a thorough fact-check analysis considering both the text content and any factual claims visible in the image. Look for:
-            - Claims in the text
-            - Claims visible in the image (charts, graphs, text in images, screenshots, etc.)
-            - Statistics, data, or numbers shown visually
-            - Dates, names, or other factual information in the image
-            - Any discrepancies between text and visual content
-            
-            RESPONSE FORMAT: Return ONLY a valid JSON object with this exact structure:
-            {{
-                "verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",
-                "confidence": 0-100,
-                "explanation": "Your comprehensive analysis covering both text and visual content",
-                "sources": ["url1", "url2"],
-                "text_claims": ["claim1", "claim2"],
-                "visual_claims": ["visual_claim1", "visual_claim2"]
-            }}
-            
-            CRITICAL: Return ONLY the JSON object, no other text. Analyze both text and visual content comprehensively.
-            """
-            
-            # Use multimodal analysis with the image
-            try:
-                image_result = fact_check_image_multimodal("", primary_image_url, multimodal_prompt)
-                if isinstance(image_result, tuple):
-                    image_data, image_status = image_result
-                    if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
-                        # Update the claim to reflect multimodal analysis
-                        for result in image_data['fact_check_results']:
-                            result['claim'] = f"Multimodal Analysis: Text + Image from {get_platform_name(url)}"
-                        # annotate response with image metadata
-                        image_data['images_detected'] = len(image_urls)
-                        image_data['selected_image_url'] = primary_image_url
-                        image_data['source_url'] = url
-                        image_data['debug_image_urls'] = image_urls[:10]
-                        image_data['image_detection_info'] = image_detection_info
-                        return image_data, 200
-            except Exception as e:
-                # If multimodal analysis fails, fall back to text-only analysis
-                pass
-        
-        # Fallback to text-only analysis if no images or multimodal analysis fails
-        if text and len(text.strip()) > 5:
-            text_result = fact_check_text(text)
-            if isinstance(text_result, tuple):
-                text_data, text_status = text_result
-                if text_status == 200 and isinstance(text_data, dict) and 'fact_check_results' in text_data:
-                    # Add information about detected images if any
-                    if image_urls:
-                        for result in text_data['fact_check_results']:
-                            result['claim'] = f"Text Analysis (with {len(image_urls)} image(s) detected): {result.get('claim', 'Content Analysis')}"
-                    elif image_detection_info.get("image_detected", False):
-                        # Images were detected but couldn't be accessed
-                        for result in text_data['fact_check_results']:
-                            result['claim'] = f"Text Analysis (images detected but not accessible): {result.get('claim', 'Content Analysis')}"
-                        # Add image detection message
-                        text_data['image_detection_message'] = image_detection_info.get("message", "")
-                    
-                    text_data['images_detected'] = len(image_urls)
-                    text_data['source_url'] = url
-                    text_data['debug_image_urls'] = image_urls[:10]
-                    text_data['image_detection_info'] = image_detection_info
-                    return text_data, 200
-        
-        # If no results, create a default response
-        results = [{
-            "claim": f"Content Analysis from {get_platform_name(url)}",
-            "result": {
-                "verdict": "NO FACTUAL CLAIMS",
-                "confidence": 100,
-                "explanation": "The content does not contain any factual claims that can be verified.",
-                "sources": []
-            }
-        }]
-        
-        response_data = {
-            "fact_check_results": results,
-            "original_text": text,
-            "claims_found": len(results),
-            "source_url": url,
-            "images_detected": len(image_urls),
-            "debug_image_urls": image_urls[:10],
-            "image_detection_info": image_detection_info
-        }
-        
-        # Add image detection message if images were detected but not accessible
-        if image_detection_info.get("image_detected", False) and len(image_urls) == 0:
-            response_data['image_detection_message'] = image_detection_info.get("message", "")
-        
-        return response_data, 200
-        
-    except Exception as e:
-        return {"error": f"URL analysis failed: {str(e)}"}, 500
-
-def fact_check_image_multimodal(image_data_url, image_url, custom_prompt):
-    """Fact-check claims from an image using Perplexity's multimodal capabilities with custom prompt"""
-    if not PERPLEXITY_API_KEY:
-        return {"error": "API key not configured"}, 500
-    
-    headers = {
-        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    try:
-        # Build Perplexity multimodal prompt
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": custom_prompt}
-                ]
-            }
-        ]
-        
-        # Handle different types of image URLs
-        if image_data_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
-        elif image_url:
-            # Try to handle redirect URLs and protected URLs
-            processed_url = process_image_url(image_url)
-            messages[0]["content"].append({"type": "image_url", "image_url": processed_url})
-
-        payload = {
-            "model": "sonar-pro",  # supports vision per Perplexity docs
-            "messages": messages,
-            "max_tokens": 800,
-        }
-
-        sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
-        if sonar_resp.status_code != 200:
-            return {"error": f"Image analysis failed: HTTP {sonar_resp.status_code}"}, 500
-
-        content = sonar_resp.json()['choices'][0]['message']['content']
-        
-        # Try to parse the response as JSON
-        try:
-            # Clean the content if it has "json" prefix
-            clean_content = content.strip()
-            if clean_content.startswith('json '):
-                clean_content = clean_content[5:].strip()
-            
-            parsed = json.loads(clean_content)
-            
-            # Create the result structure
-            result = {
+            return {
                 "fact_check_results": [{
-                    "claim": "Multimodal Analysis",
+                    "claim": "Image Analysis",
                     "result": {
-                        "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
-                        "confidence": parsed.get("confidence", 75),
-                        "explanation": parsed.get("explanation", "Analysis completed"),
-                        "sources": parsed.get("sources", [])
+                        "verdict": "INSUFFICIENT EVIDENCE",
+                        "confidence": 75,
+                        "explanation": content,
+                        "sources": []
                     }
                 }],
-                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
-                "timestamp": time.time(),
-                "source_url": image_url if image_url else None
-            }
-            
-            return result, 200
-            
-        except json.JSONDecodeError:
-            # If JSON parsing fails, try to extract useful information
-            if "no factual claims" in content.lower() or "no claims" in content.lower():
-                return {
-                    "fact_check_results": [{
-                        "claim": "Multimodal Analysis",
-                        "result": {
-                            "verdict": "NO FACTUAL CLAIMS",
-                            "confidence": 100,
-                            "explanation": "This content does not contain any factual claims that can be verified.",
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 0,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
-            else:
-                # Try to extract verdict and explanation from the text
-                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
-                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
-                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                
-                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
-                confidence = int(confidence_match.group(1)) if confidence_match else 75
-                explanation = explanation_match.group(1) if explanation_match else content
-                
-                return {
-                    "fact_check_results": [{
-                        "claim": "Multimodal Analysis",
-                        "result": {
-                            "verdict": verdict,
-                            "confidence": confidence,
-                            "explanation": explanation,
-                            "sources": []
-                        }
-                    }],
-                    "claims_found": 1,
-                    "timestamp": time.time(),
-                    "source_url": image_url if image_url else None
-                }, 200
-
+                "claims_found": 1,
+                "timestamp": time.time()
+            }, 200
+    
     except Exception as e:
-        return {"error": f"Multimodal analysis failed: {str(e)}"}, 500
+        return {"error": f"Analysis failed: {str(e)}"}, 500
+
+def fact_check_url_with_images(url):
+    """Main function that extracts and fact-checks both text and images"""
+    try:
+        print(f"\n=== STARTING FACT-CHECK FOR: {url} ===")
+        
+        # Extract content using your comprehensive approach
+        content = extract_content_from_url(url)
+        text = content.get("text", "").strip()
+        image_urls = content.get("image_urls", [])
+        image_detection_info = content.get("image_detection_info", {})
+        
+        print(f"EXTRACTION RESULT: Text={len(text)} chars, Images={len(image_urls)}")
+        
+        all_results = []
+        
+        # Fact-check text if meaningful content exists
+        if text and len(text) > 10 and "extraction failed" not in text.lower():
+            try:
+                text_result, status_code = fact_check_text(text)
+                if status_code == 200 and isinstance(text_result, dict):
+                    text_fact_checks = text_result.get('fact_check_results', [])
+                    for result in text_fact_checks:
+                        result['source_type'] = 'text'
+                        all_results.append(result)
+                    print(f"✅ Text analysis: {len(text_fact_checks)} claims")
+            except Exception as e:
+                print(f"❌ Text analysis failed: {e}")
+        
+        # Fact-check each accessible image
+        image_analysis_results = []
+        for i, img_url in enumerate(image_urls):
+            try:
+                print(f"🖼️ Analyzing image {i+1}: {img_url}")
+                img_result, status_code = fact_check_image("", img_url)
+                
+                if status_code == 200 and isinstance(img_result, dict):
+                    img_fact_checks = img_result.get('fact_check_results', [])
+                    
+                    image_result_summary = {
+                        "image_url": img_url,
+                        "claims_found": len(img_fact_checks),
+                        "fact_check_results": img_fact_checks
+                    }
+                    
+                    image_analysis_results.append(image_result_summary)
+                    
+                    for fact_check in img_fact_checks:
+                        fact_check_copy = fact_check.copy()
+                        fact_check_copy['source_type'] = 'image'
+                        fact_check_copy['image_url'] = img_url
+                        all_results.append(fact_check_copy)
+                    
+                    print(f"✅ Image {i+1} analysis: {len(img_fact_checks)} claims")
+                        
+            except Exception as e:
+                print(f"❌ Image {i+1} analysis failed: {e}")
+        
+        platform = get_platform_name(url)
+        
+        return {
+            "original_text": text,
+            "fact_check_results": all_results,
+            "image_analysis_results": image_analysis_results,
+            "claims_found": len(all_results),
+            "images_processed": len(image_analysis_results),
+            "timestamp": time.time(),
+            "source_url": url,
+            "platform": platform,
+            "image_detection_info": image_detection_info
+        }, 200
+        
+    except Exception as e:
+        print(f"❌ URL analysis failed: {e}")
+        return {"error": f"URL analysis failed: {str(e)}"}, 500
 
 def get_platform_name(url):
-    """Get the platform name from a URL"""
-    if 'twitter.com' in url or 'x.com' in url or 'pic.twitter.com' in url:
+    """Get platform name from URL"""
+    if 'twitter.com' in url or 'x.com' in url:
         return "Twitter/X"
-    elif 'reddit.com' in url or 'i.redd.it' in url:
+    elif 'reddit.com' in url:
         return "Reddit"
-    elif 'instagram.com' in url or 'cdninstagram.com' in url:
+    elif 'instagram.com' in url:
         return "Instagram"
-    elif 'facebook.com' in url or 'fb.com' in url or 'fbcdn.net' in url:
+    elif 'facebook.com' in url:
         return "Facebook"
-    elif 'imgur.com' in url:
-        return "Imgur"
     else:
-        return "social media"
-
-def _try_twitter_syndication_api(url: str) -> dict:
-    """Try Twitter's syndication API for content and images."""
-    try:
-        # Extract tweet ID from URL
-        tweet_id = re.search(r'/status/(\d+)', url)
-        if not tweet_id:
-            return None
-        
-        tweet_id = tweet_id.group(1)
-        api_url = f"https://cdn.syndication.twimg.com/widgets/tweet?id={tweet_id}&lang=en"
-        
-        r = requests.get(api_url, headers=DEFAULT_HEADERS, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            text_content = data.get('text', '')
-            
-            image_urls = []
-            if data.get('photos'):
-                for photo in data['photos']:
-                    image_urls.append(photo.get('url'))
-            if data.get('video'):
-                image_urls.append(data['video'].get('poster'))
-            
-            return {"text": text_content, "images": image_urls}
-    except Exception:
-        pass
-    return None
-
-def _try_twitter_oembed_api(url: str) -> dict:
-    """Try Twitter's oEmbed API for content and images."""
-    try:
-        # Extract tweet ID from URL
-        tweet_id = re.search(r'/status/(\d+)', url)
-        if not tweet_id:
-            return None
-        
-        tweet_id = tweet_id.group(1)
-        oembed_url = f"https://publish.twitter.com/oembed?url={url}"
-        
-        r = requests.get(oembed_url, headers=DEFAULT_HEADERS, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            
-            # Extract text content from HTML
-            html_content = data.get('html', '')
-            if html_content:
-                # Parse HTML and extract text content
-                soup = BeautifulSoup(html_content, 'lxml')
-                # Remove blockquote tags and extract text
-                text_content = soup.get_text(' ', strip=True)
-                # Clean up the text
-                text_content = re.sub(r'\s+', ' ', text_content).strip()
-            else:
-                text_content = data.get('title', '')
-            
-            image_urls = []
-            if data.get('photo'):
-                image_urls.append(data['photo'])
-            
-            return {"text": text_content, "images": image_urls}
-    except Exception:
-        pass
-    return None
-
-def _try_twitter_with_enhanced_headers(url: str) -> dict:
-    """Try Twitter/X with enhanced headers."""
-    try:
-        # Construct a mobile URL if it's a Twitter URL
-        if 'twitter.com' in url:
-            mobile_url = url.replace('twitter.com', 'm.twitter.com')
-        elif 'x.com' in url:
-            mobile_url = url.replace('x.com', 'm.x.com')
-        else:
-            return None # Not a Twitter/X URL
-        
-        r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=10)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'lxml')
-            
-            # Try to extract title and content
-            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
-            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
-            
-            title = title_elem.get_text().strip() if title_elem else ""
-            content = content_elem.get_text().strip() if content_elem else ""
-            
-            text_content = f"{title} {content}".strip()
-            
-            # Extract images
-            image_urls = []
-            for img in soup.find_all('img'):
-                src = img.get('src')
-                if src and _is_image_like(src):
-                    image_urls.append(_resolve_url(url, src))
-            
-            return {"text": text_content, "images": image_urls}
-    except Exception:
-        pass
-    return None
-
-def _try_twitter_mobile(url: str) -> dict:
-    """Try Twitter/X's mobile version."""
-    try:
-        # Construct a mobile URL if it's a Twitter URL
-        if 'twitter.com' in url:
-            mobile_url = url.replace('twitter.com', 'm.twitter.com')
-        elif 'x.com' in url:
-            mobile_url = url.replace('x.com', 'm.x.com')
-        else:
-            return None # Not a Twitter/X URL
-        
-        r = requests.get(mobile_url, headers=BROWSER_HEADERS, timeout=10)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'lxml')
-            
-            # Enhanced selectors for mobile Twitter/X
-            title_selectors = ['h1', 'h2', 'h3', '[data-testid="post-title"]', '.title']
-            content_selectors = ['.content', '.post-content', '[data-testid="post-content"]', '.RichTextJSON-root']
-            
-            title = ""
-            for selector in title_selectors:
-                title_elem = soup.select_one(selector)
-                if title_elem:
-                    title = title_elem.get_text().strip()
-                    break
-            
-            content = ""
-            for selector in content_selectors:
-                content_elem = soup.select_one(selector)
-                if content_elem:
-                    content = content_elem.get_text().strip()
-                    break
-            
-            text_content = f"{title} {content}".strip()
-            
-            # Enhanced image extraction for mobile Twitter/X
-            image_urls = []
-            
-            # Look for images in various mobile Twitter/X patterns
-            img_selectors = [
-                'img[src*="twitter.com"]',
-                'img[src*="x.com"]',
-                'img[src*="pic.twitter.com"]',
-                'img[src*="cdninstagram.com"]',
-                'img[src*="fbcdn.net"]',
-                'img[src*="imgur.com"]',
-                'img[data-src*="twitter.com"]',
-                'img[data-src*="x.com"]',
-                'img[data-src*="pic.twitter.com"]',
-                'img[data-src*="cdninstagram.com"]',
-                'img[data-src*="fbcdn.net"]',
-                'img[data-src*="imgur.com"]',
-                '.post-image img',
-                '.image-post img',
-                '.gallery img',
-                '.media img'
-            ]
-            
-            for selector in img_selectors:
-                for img in soup.select(selector):
-                    src = img.get('src') or img.get('data-src')
-                    if src and _is_image_like(src):
-                        # Clean up Twitter/X image URLs
-                        if 'twitter.com' in src:
-                            src = src.replace('twitter.com', 'm.twitter.com')
-                        elif 'x.com' in src:
-                            src = src.replace('x.com', 'm.x.com')
-                        elif 'pic.twitter.com' in src:
-                            src = src.replace('pic.twitter.com', 'm.pic.twitter.com')
-                        image_urls.append(_resolve_url(url, src))
-            
-            # Also look for background images in CSS
-            for elem in soup.find_all(style=True):
-                style_content = elem.get_text()
-                # Extract URLs from CSS background-image properties
-                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
-                for bg_url in bg_urls:
-                    if _is_image_like(bg_url):
-                        image_urls.append(_resolve_url(url, bg_url))
-            
-            # Remove duplicates
-            unique_images = []
-            seen_urls = set()
-            for img_url in image_urls:
-                if img_url and img_url not in seen_urls:
-                    unique_images.append(img_url)
-                    seen_urls.add(img_url)
-            
-            return {"text": text_content, "images": unique_images}
-    except Exception:
-        pass
-    return None
-
-def _try_twitter_with_session(url: str) -> dict:
-    """Try Twitter/X with session and cookies."""
-    try:
-        session = requests.Session()
-        session.headers.update(BROWSER_HEADERS)
-        
-        # First, visit the main page to get cookies
-        session.get('https://twitter.com', timeout=10) # Twitter
-        session.get('https://x.com', timeout=10) # X
-        
-        # Then try to access the specific post
-        r = session.get(url, timeout=10)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'lxml')
-            
-            # Try to extract content
-            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
-            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
-            
-            title = title_elem.get_text().strip() if title_elem else ""
-            content = content_elem.get_text().strip() if content_elem else ""
-            
-            text_content = f"{title} {content}".strip()
-            
-            # Extract images
-            image_urls = []
-            for img in soup.find_all('img'):
-                src = img.get('src')
-                if src and _is_image_like(src):
-                    image_urls.append(_resolve_url(url, src))
-            
-            return {"text": text_content, "images": image_urls}
-    except Exception:
-        pass
-    return None
-
-def _try_generic_twitter_scraper(url: str) -> dict:
-    """Generic scraper for Twitter/X as last resort."""
-    try:
-        r = requests.get(url, headers=DEFAULT_HEADERS, timeout=15)
-        if r.status_code == 200:
-            soup = BeautifulSoup(r.text, 'lxml')
-            
-            # Try to extract title and content
-            title_elem = soup.find('h1') or soup.find('h2') or soup.find('h3')
-            content_elem = soup.find('div', {'data-testid': 'post-content'}) or soup.find('div', class_='RichTextJSON-root')
-            
-            title = title_elem.get_text().strip() if title_elem else ""
-            content = content_elem.get_text().strip() if content_elem else ""
-            
-            text_content = f"{title} {content}".strip()
-            
-            # Extract images
-            image_urls = []
-            for img in soup.find_all('img'):
-                src = img.get('src')
-                if src and _is_image_like(src):
-                    image_urls.append(_resolve_url(url, src))
-            
-            return {"text": text_content, "images": image_urls}
-    except Exception:
-        pass
-    return None
+        return "Web"
 
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == '/api/health':
             response_data = {
-                "status": "healthy", 
+                "status": "healthy",
                 "timestamp": time.time(),
                 "api_key_set": bool(PERPLEXITY_API_KEY)
             }
+            
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.send_header('Access-Control-Allow-Origin', '*')
@@ -1599,8 +1079,10 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"error": "Invalid JSON"}).encode())
             return
         
+        response_data = {"error": "Unknown error"}
+        status_code = 500
+        
         if self.path == '/api/fact-check':
-            # Handle both text and URL inputs
             text = data.get('text', '')
             url = data.get('url', '')
             
@@ -1610,33 +1092,26 @@ class handler(BaseHTTPRequestHandler):
             else:
                 try:
                     if url:
-                        # Extract and fact-check both text and images from URL
                         response_data, status_code = fact_check_url_with_images(url)
                     else:
-                        # Use provided text
                         response_data, status_code = fact_check_text(text)
                 except Exception as e:
-                    response_data = {"error": f"Content extraction failed: {str(e)}"}
-                    status_code = 400
+                    response_data = {"error": f"Analysis failed: {str(e)}"}
+                    status_code = 500
+        
         elif self.path == '/api/fact-check-image':
-            # Handle image-based fact checking
             image_data_url = data.get('image_data_url', '')
             image_url = data.get('image_url', '')
             
             if not image_data_url and not image_url:
-                response_data = {"error": "No image data URL or image URL provided"}
+                response_data = {"error": "No image provided"}
                 status_code = 400
             else:
-                # Check image data URL size (limit to 10MB)
-                if image_data_url and len(image_data_url) > 10 * 1024 * 1024:
-                    response_data = {"error": "Image data URL is too large. Please use a smaller image."}
-                    status_code = 400
-                else:
-                    try:
-                        response_data, status_code = fact_check_image(image_data_url, image_url)
-                    except Exception as e:
-                        response_data = {"error": f"Image analysis failed: {str(e)}"}
-                        status_code = 400
+                try:
+                    response_data, status_code = fact_check_image(image_data_url, image_url)
+                except Exception as e:
+                    response_data = {"error": f"Image analysis failed: {str(e)}"}
+                    status_code = 500
         else:
             response_data = {"error": "Endpoint not found"}
             status_code = 404
@@ -1646,7 +1121,6 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        self.send_header('Access-Control-Max-Age', '86400')
         self.end_headers()
         self.wfile.write(json.dumps(response_data).encode())
     
@@ -1656,4 +1130,3 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
         self.end_headers()
-
