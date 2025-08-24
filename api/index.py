@@ -350,16 +350,24 @@ def fact_check_image(image_data_url, image_url):
     }
     
     try:
-        # Build Perplexity multimodal prompt for claim extraction from image
+        # Build Perplexity multimodal prompt for direct fact-checking
         messages = [
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": (
-                        "Analyze this image. Extract all factual claims that a third-party could verify. "
-                        "If the image contains text, quotes, statistics, dates, names, or any verifiable statements, list them as numbered claims. "
-                        "If the image is purely visual (art, abstract, decorative) with no factual content, respond with 'No factual claims found in this image.' "
-                        "Return ONLY the claims as a numbered list, or the 'No factual claims' message if applicable."
+                        "Analyze this image and fact-check any factual claims you can identify. "
+                        "Look for text, statistics, dates, names, quotes, or any verifiable statements. "
+                        "If the image contains factual claims, provide a fact-check analysis. "
+                        "If the image is purely visual (art, abstract, decorative) with no factual content, indicate this. "
+                        "Return ONLY a valid JSON object with this exact structure: "
+                        "{"
+                        '"verdict": "TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/NO FACTUAL CLAIMS",'
+                        '"confidence": 0-100,'
+                        '"explanation": "Your detailed analysis here",'
+                        '"sources": ["url1", "url2"]'
+                        "}"
+                        "CRITICAL: Return ONLY the JSON object, no other text."
                     )}
                 ]
             }
@@ -372,7 +380,7 @@ def fact_check_image(image_data_url, image_url):
         payload = {
             "model": "sonar-pro",  # supports vision per Perplexity docs
             "messages": messages,
-            "max_tokens": 500,
+            "max_tokens": 800,
         }
 
         sonar_resp = requests.post(PERPLEXITY_URL, headers=headers, json=payload, timeout=30)
@@ -381,32 +389,36 @@ def fact_check_image(image_data_url, image_url):
 
         content = sonar_resp.json()['choices'][0]['message']['content']
         
-        # Check if the image contains any factual claims
-        if "no factual claims" in content.lower() or "no claims" in content.lower() or "nothing to fact-check" in content.lower():
-            return {
+        # Try to parse the response as JSON
+        try:
+            # Clean the content if it has "json" prefix
+            clean_content = content.strip()
+            if clean_content.startswith('json '):
+                clean_content = clean_content[5:].strip()
+            
+            parsed = json.loads(clean_content)
+            
+            # Create the result structure
+            result = {
                 "fact_check_results": [{
                     "claim": "Image Analysis",
                     "result": {
-                        "verdict": "NO FACTUAL CLAIMS",
-                        "confidence": 100,
-                        "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
-                        "sources": []
+                        "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
+                        "confidence": parsed.get("confidence", 75),
+                        "explanation": parsed.get("explanation", "Analysis completed"),
+                        "sources": parsed.get("sources", [])
                     }
                 }],
-                "claims_found": 0,
+                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
                 "timestamp": time.time(),
                 "source_url": image_url if image_url else None
-            }, 200
-        
-        # Convert numbered list into claims
-        claims = [line.strip() for line in content.split('\n') if line.strip() and any(c.isdigit() for c in line[:3])]
-        if not claims:
-            # If no numbered list found, try to extract meaningful content
-            lines = [line.strip() for line in content.split('\n') if line.strip()]
-            if lines:
-                claims = [lines[0]]  # Take the first meaningful line
-            else:
-                # If still no content, return no claims found
+            }
+            
+            return result, 200
+            
+        except json.JSONDecodeError:
+            # If JSON parsing fails, try to extract useful information
+            if "no factual claims" in content.lower() or "no claims" in content.lower():
                 return {
                     "fact_check_results": [{
                         "claim": "Image Analysis",
@@ -421,38 +433,30 @@ def fact_check_image(image_data_url, image_url):
                     "timestamp": time.time(),
                     "source_url": image_url if image_url else None
                 }, 200
-
-        # Fact-check each claim via existing pipeline
-        results = []
-        for claim in claims:
-            if claim.strip():
-                # Use the existing fact_check_text function
-                fact_check_result = fact_check_text(claim)
-                if isinstance(fact_check_result, tuple):
-                    # If fact_check_text returns (data, status), extract just the data
-                    result_data, _ = fact_check_result
-                    if isinstance(result_data, dict) and 'fact_check_results' in result_data:
-                        # Extract the first result from the fact check
-                        if result_data['fact_check_results']:
-                            results.append({
-                                "claim": claim,
-                                "result": result_data['fact_check_results'][0]['result']
-                            })
-                else:
-                    # If fact_check_text returns just data
-                    if isinstance(fact_check_result, dict) and 'fact_check_results' in fact_check_result:
-                        if fact_check_result['fact_check_results']:
-                            results.append({
-                                "claim": claim,
-                                "result": fact_check_result['fact_check_results'][0]['result']
-                            })
-
-        return {
-            "fact_check_results": results,
-            "claims_found": len(results),
-            "timestamp": time.time(),
-            "source_url": image_url if image_url else None
-        }, 200
+            else:
+                # Try to extract verdict and explanation from the text
+                verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
+                confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
+                explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
+                
+                verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
+                confidence = int(confidence_match.group(1)) if confidence_match else 75
+                explanation = explanation_match.group(1) if explanation_match else content
+                
+                return {
+                    "fact_check_results": [{
+                        "claim": "Image Analysis",
+                        "result": {
+                            "verdict": verdict,
+                            "confidence": confidence,
+                            "explanation": explanation,
+                            "sources": []
+                        }
+                    }],
+                    "claims_found": 1,
+                    "timestamp": time.time(),
+                    "source_url": image_url if image_url else None
+                }, 200
 
     except Exception as e:
         return {"error": f"Image analysis failed: {str(e)}"}, 500
