@@ -128,6 +128,43 @@ def _is_image_like(url: str) -> bool:
         "redditstatic.com"
     ])
 
+def _detect_images_in_text(text_content: str) -> dict:
+    """Detect if text content contains image patterns and provide appropriate messaging."""
+    try:
+        # Check for common image patterns in text content
+        image_patterns = [
+            r'pic\.twitter\.com/[a-zA-Z0-9]+',
+            r'i\.redd\.it/[a-zA-Z0-9]+',
+            r'preview\.redd\.it/[a-zA-Z0-9]+',
+            r'imgur\.com/[a-zA-Z0-9]+',
+            r'https?://[^\s]+\.(jpg|jpeg|png|gif|webp|svg)',
+            r'redditmedia\.com/[^\s]+',
+            r'redditstatic\.com/[^\s]+',
+            r'pbs\.twimg\.com/[^\s]+',
+            r'cdninstagram\.com/[^\s]+'
+        ]
+        
+        has_images = any(re.search(pattern, text_content, re.IGNORECASE) for pattern in image_patterns)
+        
+        if has_images:
+            return {
+                "has_images": True,
+                "message": "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking.",
+                "image_detected": True
+            }
+        else:
+            return {
+                "has_images": False,
+                "message": "",
+                "image_detected": False
+            }
+    except Exception:
+        return {
+            "has_images": False,
+            "message": "",
+            "image_detected": False
+        }
+
 def _detect_images_in_url(url: str) -> dict:
     """Detect if a URL contains images and provide appropriate messaging."""
     try:
@@ -276,16 +313,31 @@ def extract_content_from_url(url: str) -> dict:
     unique_images = sorted(list(set(filter(None, image_urls))))
     final_images = [img for img in unique_images if _is_image_like(img)]
 
-    # Update image detection info based on actual extraction
-    if image_detection_info["has_images"] or len(final_images) > 0:
-        image_detection_info["image_detected"] = True
-        if len(final_images) == 0:
-            image_detection_info["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
+    # Check for images in both URL and text content
+    url_image_detection = _detect_images_in_url(url)
+    text_image_detection = _detect_images_in_text(text_content)
+    
+    # Debug information
+    print(f"URL image detection: {url_image_detection}")
+    print(f"Text image detection: {text_image_detection}")
+    print(f"Extracted text content: {text_content[:200]}...")
+    print(f"Final images found: {len(final_images)}")
+    
+    # Combine detection results - if either detects images, mark as detected
+    combined_image_detection = {
+        "has_images": url_image_detection["has_images"] or text_image_detection["has_images"],
+        "image_detected": url_image_detection["image_detected"] or text_image_detection["image_detected"],
+        "message": ""
+    }
+    
+    # Set message if images were detected but not accessible
+    if combined_image_detection["image_detected"] and len(final_images) == 0:
+        combined_image_detection["message"] = "Images detected in this post, but they cannot be accessed directly from the URL. Please provide a screenshot of the image for visual fact-checking."
 
     return {
         "text": text_content or "No text content found.",
         "image_urls": final_images[:10], # Limit to 10 images
-        "image_detection_info": image_detection_info
+        "image_detection_info": combined_image_detection
     }
 
 def _try_reddit_api_with_id(url: str) -> dict:
