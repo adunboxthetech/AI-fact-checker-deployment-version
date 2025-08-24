@@ -586,7 +586,7 @@ def fact_check_url_with_images(url):
         results = []
         
         # First, fact-check the text content
-        if text and len(text.strip()) > 20:
+        if text and len(text.strip()) > 5:  # Reduced minimum length for tweets
             text_result = fact_check_text(text)
             if isinstance(text_result, tuple):
                 text_data, text_status = text_result
@@ -594,16 +594,25 @@ def fact_check_url_with_images(url):
                     results.extend(text_data['fact_check_results'])
         
         # Then, fact-check each image
+        print(f"Found {len(image_urls)} images to analyze")
         for i, image_url in enumerate(image_urls[:3]):  # Limit to first 3 images
+            print(f"Analyzing image {i+1}: {image_url}")
             try:
                 image_result = fact_check_image("", image_url)
+                print(f"Image {i+1} result: {image_result}")
                 if isinstance(image_result, tuple):
                     image_data, image_status = image_result
+                    print(f"Image {i+1} status: {image_status}")
                     if image_status == 200 and isinstance(image_data, dict) and 'fact_check_results' in image_data:
                         # Update claim to indicate it's from an image
                         for result in image_data['fact_check_results']:
                             result['claim'] = f"Image {i+1} from URL: {result.get('claim', 'Image Analysis')}"
                         results.extend(image_data['fact_check_results'])
+                        print(f"Added {len(image_data['fact_check_results'])} image results")
+                    else:
+                        print(f"Image {i+1} data structure invalid: {image_data}")
+                else:
+                    print(f"Image {i+1} result not a tuple: {image_result}")
             except Exception as e:
                 # If image analysis fails, continue with other images
                 print(f"Image analysis failed for {image_url}: {str(e)}")
