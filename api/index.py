@@ -263,18 +263,16 @@ def extract_content_from_url(url):
                             oembed_html = oembed_data["html"]
                             pic_urls = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', oembed_html)
                             for pic_url in pic_urls:
-                                # Convert pic.twitter.com URL to actual image URL
-                                # pic.twitter.com/vHH5nMStg9 -> https://pbs.twimg.com/media/vHH5nMStg9.jpg
-                                image_id = pic_url.split('/')[-1]
-                                actual_image_url = f"https://pbs.twimg.com/media/{image_id}.jpg"
-                                image_urls.append(actual_image_url)
+                                # Use the pic.twitter.com URL directly - Perplexity can handle redirects
+                                full_pic_url = f"https://{pic_url}"
+                                image_urls.append(full_pic_url)
                     
                     # Approach 2: Also look for pic.twitter.com URLs in the extracted text
                     pic_urls_in_text = re.findall(r'pic\.twitter\.com/[a-zA-Z0-9]+', text)
                     for pic_url in pic_urls_in_text:
-                        image_id = pic_url.split('/')[-1]
-                        actual_image_url = f"https://pbs.twimg.com/media/{image_id}.jpg"
-                        image_urls.append(actual_image_url)
+                        # Use the pic.twitter.com URL directly - Perplexity can handle redirects
+                        full_pic_url = f"https://{pic_url}"
+                        image_urls.append(full_pic_url)
                     
             except Exception as e:
                 # If Twitter extraction fails, continue with other methods
