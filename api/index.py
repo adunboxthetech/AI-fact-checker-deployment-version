@@ -528,11 +528,16 @@ class handler(BaseHTTPRequestHandler):
                 response_data = {"error": "No image data URL or image URL provided"}
                 status_code = 400
             else:
-                try:
-                    response_data, status_code = fact_check_image(image_data_url, image_url)
-                except Exception as e:
-                    response_data = {"error": f"Image analysis failed: {str(e)}"}
+                # Check image data URL size (limit to 10MB)
+                if image_data_url and len(image_data_url) > 10 * 1024 * 1024:
+                    response_data = {"error": "Image data URL is too large. Please use a smaller image."}
                     status_code = 400
+                else:
+                    try:
+                        response_data, status_code = fact_check_image(image_data_url, image_url)
+                    except Exception as e:
+                        response_data = {"error": f"Image analysis failed: {str(e)}"}
+                        status_code = 400
         else:
             response_data = {"error": "Endpoint not found"}
             status_code = 404
@@ -541,7 +546,8 @@ class handler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.send_header('Access-Control-Max-Age', '86400')
         self.end_headers()
         self.wfile.write(json.dumps(response_data).encode())
     
