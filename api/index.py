@@ -4,13 +4,27 @@ import requests
 import os
 import time
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse, ParseResult, urlencode, parse_qsl
 from bs4 import BeautifulSoup
 from readability import Document
 
 # Perplexity API configuration
 PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+
+def _build_reddit_json_url(url: str) -> str:
+    """Build a proper Reddit JSON URL, inserting .json before query and adding raw_json=1."""
+    pu = urlparse(url)
+    # Ensure host is reddit domain if a redd.it shortlink, pass through path
+    path = pu.path.rstrip('/')
+    if not path.endswith('.json'):
+        path = path + '.json'
+    # merge query params and ensure raw_json=1
+    q = dict(parse_qsl(pu.query, keep_blank_values=True))
+    q['raw_json'] = '1'
+    new_q = urlencode(q, doseq=True)
+    new_parts = ParseResult(pu.scheme, pu.netloc, path, pu.params, new_q, pu.fragment)
+    return urlunparse(new_parts)
 
 def extract_text_from_url(url):
     """Extract text content from a URL with robust social media handling"""
@@ -36,9 +50,7 @@ def extract_text_from_url(url):
             # Strategy 1: Try Reddit JSON API with different user agents
             try:
                 # Convert to JSON URL (prefer raw_json=1 to avoid HTML entities)
-                base_json = url if url.endswith('.json') else (url.rstrip('/') + '.json')
-                sep = '&' if ('?' in base_json) else '?'
-                json_url = f"{base_json}{sep}raw_json=1"
+                json_url = _build_reddit_json_url(url)
                 
                 # Try multiple user agents to avoid blocking
                 user_agents = [
@@ -294,7 +306,17 @@ def extract_content_from_url(url):
         if response.status_code != 200:
             # Fall back to robust text extractor (handles Reddit JSON and Jina Reader)
             text = extract_text_from_url(url)
-            soup = BeautifulSoup('', 'lxml')
+            # Try to get HTML via Jina Reader for OG/Twitter image extraction
+            try:
+                q = f"?{parsed_url.query}" if parsed_url.query else ""
+                wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}{q}"
+                jr = requests.get(wrapped, headers=headers, timeout=18)
+                if jr.status_code == 200 and jr.text:
+                    soup = BeautifulSoup(jr.text, 'lxml')
+                else:
+                    soup = BeautifulSoup('', 'lxml')
+            except Exception:
+                soup = BeautifulSoup('', 'lxml')
         else:
             # Parse HTML content
             soup = BeautifulSoup(response.text, 'lxml')
@@ -414,16 +436,34 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
     elif parsed_url.netloc in {"reddit.com", "www.reddit.com", "old.reddit.com", "redd.it"}:
         try:
             # Prefer Reddit JSON for reliable media discovery
-            base_json = url if url.endswith('.json') else (url.rstrip('/') + '.json')
-            sep = '&' if ('?' in base_json) else '?'
-            json_url = f"{base_json}{sep}raw_json=1"
+            json_url = _build_reddit_json_url(url)
             rj_headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 "Accept": "application/json"
             }
             rj = requests.get(json_url, headers=rj_headers, timeout=12)
+            data = None
             if rj.status_code == 200:
                 data = rj.json()
+            else:
+                # Try proxy fallbacks for Reddit JSON
+                proxy_candidates = [
+                    f"https://r.jina.ai/{json_url}",
+                    f"https://api.allorigins.win/raw?url={json_url}"
+                ]
+                for purl in proxy_candidates:
+                    try:
+                        pr = requests.get(purl, headers=rj_headers, timeout=12)
+                        if pr.status_code == 200 and pr.text:
+                            try:
+                                data = json.loads(pr.text)
+                                break
+                            except Exception:
+                                continue
+                    except Exception:
+                        continue
+            post = {}
+            if data is not None:
                 try:
                     post = (data[0]["data"]["children"][0]["data"] if isinstance(data, list) else data["data"]["children"][0]["data"])
                 except Exception:
@@ -473,6 +513,18 @@ def extract_platform_specific_images(url, parsed_url, headers, text):
                 if thumb:
                     image_urls.append(thumb)
             
+            # If still nothing and we can read OG from Jina HTML
+            if not image_urls:
+                try:
+                    wrapped = f"https://r.jina.ai/{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+                    jr = requests.get(wrapped, headers=headers, timeout=15)
+                    if jr.status_code == 200 and jr.text:
+                        jr_soup = BeautifulSoup(jr.text, 'lxml')
+                        ogs = extract_og_images(jr_soup, parsed_url)
+                        image_urls.extend(ogs)
+                except Exception:
+                    pass
+
             # Fallback: regex for i.redd.it and imgur links in text
             reddit_images = re.findall(r'https://i\.redd\.it/[a-zA-Z0-9_\-]+\.(?:jpg|jpeg|png|gif|webp)', text)
             image_urls.extend(reddit_images)
