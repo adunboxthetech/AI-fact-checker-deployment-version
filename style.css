@@ -112,26 +112,22 @@ body {
     background: #000000;
 }
 
+.header-subtitles {
+    margin-top: 16px;
+    padding-left: 50px; /* Align with the title */
+}
+
 .subtitle {
-    margin-top: 8px;
-    color: var(--muted);
+    margin-top: 0;
+    font-size: 1.1rem;
     font-weight: 500;
-    font-size: 1rem; /* Increased font size */
-    text-align: center; /* Center align */
-    max-width: 550px; /* Max width for better readability */
-    margin-left: auto; /* Center align */
-    margin-right: auto; /* Center align */
+    color: var(--text);
 }
 
 .subtitle-hint {
-    font-size: 0.85rem; /* Increased font size */
+    font-size: 0.9rem;
     color: var(--muted);
-    font-weight: 400;
-    opacity: 0.9; /* Increased opacity */
-    margin: 4px auto 0; /* Center align and add margin */
-    line-height: 1.4;
-    text-align: center; /* Center align */
-    max-width: 550px; /* Max width for better readability */
+    margin-top: 4px;
 }
 
 .icon-btn {
