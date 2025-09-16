@@ -56,6 +56,34 @@ BROWSER_HEADERS = {
     "sec-ch-ua-platform": '"macOS"'
 }
 
+def _try_parse_json_block(s: str):
+    """Attempt to parse a JSON object from a possibly fenced/annotated string."""
+    import re, json as _json
+    if s is None:
+        return None
+    s = s.strip()
+    # Strip code fences
+    if s.startswith('```'):
+        s = re.sub(r'^```(?:json)?\s*', '', s, flags=re.I)
+        s = re.sub(r'\s*```$', '', s)
+    # Strip leading 'json ' prefix
+    if s.lower().startswith('json '):
+        s = s[5:].strip()
+    # Try whole string
+    try:
+        return _json.loads(s)
+    except Exception:
+        pass
+    # Try to find the first {...} block
+    start = s.find('{')
+    end = s.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        try:
+            return _json.loads(s[start:end+1])
+        except Exception:
+            return None
+    return None
+
 def process_image_url(image_url):
     """Process image URL to handle redirects and protected URLs"""
     if not image_url:
@@ -633,9 +661,8 @@ def _try_reddit_mobile_enhanced(url: str) -> dict:
             
             # Also look for background images in CSS
             for elem in soup.find_all(style=True):
-                style_content = elem.get_text()
-                # Extract URLs from CSS background-image properties
-                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
+                style_value = elem.get('style', '')
+                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\')]+)["\']?\)', style_value, re.I)
                 for bg_url in bg_urls:
                     if _is_image_like(bg_url):
                         image_urls.append(_resolve_url(url, bg_url))
@@ -711,9 +738,8 @@ def _try_old_reddit_robust(url: str) -> dict:
             
             # Also look for background images in CSS
             for elem in soup.find_all(style=True):
-                style_content = elem.get_text()
-                # Extract URLs from CSS background-image properties
-                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\']+)["\']?\)', style_content)
+                style_value = elem.get('style', '')
+                bg_urls = re.findall(r'background-image:\s*url\(["\']?([^"\')]+)["\']?\)', style_value, re.I)
                 for bg_url in bg_urls:
                     if _is_image_like(bg_url):
                         image_urls.append(_resolve_url(url, bg_url))
@@ -849,56 +875,53 @@ def fact_check_text(text):
             result = response.json()
             content = result['choices'][0]['message']['content']
 
-            
             # Try to parse as JSON, fallback to simple response
-            try:
-                # First, try to clean the content if it has "json" prefix
-                clean_content = content.strip()
-                if clean_content.startswith('json '):
-                    clean_content = clean_content[5:].strip()
-                
-                parsed = json.loads(clean_content)
-                # Format for frontend: create fact_check_results array
+            parsed = _try_parse_json_block(content)
+            if parsed is not None:
+                verdict = str(parsed.get('verdict', 'INSUFFICIENT EVIDENCE'))
+                confidence = int(parsed.get('confidence', 75))
+                explanation = parsed.get('explanation', 'Analysis completed')
+                sources = parsed.get('sources', [])
                 fact_check_result = {
                     "claim": text[:200] + "..." if len(text) > 200 else text,
-                    "result": parsed,
+                    "result": {
+                        "verdict": verdict,
+                        "confidence": confidence,
+                        "explanation": explanation,
+                        "sources": sources
+                    },
                     "status": "ANALYSIS COMPLETE"
                 }
+                claims_found = 0 if verdict.upper() == 'NO FACTUAL CLAIMS' else 1
                 return {
                     "fact_check_results": [fact_check_result],
                     "original_text": text,
-                    "claims_found": 1,
+                    "claims_found": claims_found,
                     "timestamp": time.time()
                 }, 200
-            except:
-                # If the content looks like JSON but failed to parse, try to extract useful parts
+            else:
+                # If the content looks like JSON but failed to parse, try regex extraction
                 if '"verdict"' in content and '"explanation"' in content:
-                    # Try to extract key parts using regex
                     verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
                     confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
                     explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
                     sources_match = re.search(r'"sources":\s*\[(.*?)\]', content, re.IGNORECASE | re.DOTALL)
-                    
+
                     verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
                     confidence = int(confidence_match.group(1)) if confidence_match else 75
                     explanation = explanation_match.group(1) if explanation_match else content
                     sources = ["Perplexity Analysis"]
-                    
 
-                    
                     if sources_match:
-                        # Try to extract URLs from sources
                         sources_text = sources_match.group(1)
-                        # Look for URLs in the sources text, handling quoted strings
                         url_matches = re.findall(r'https?://[^"\s,]+', sources_text)
                         if url_matches:
                             sources = url_matches
                         else:
-                            # Fallback: try to extract from the full content
                             all_urls = re.findall(r'https?://[^"\s,]+', content)
                             if all_urls:
-                                sources = all_urls[:5]  # Limit to first 5 URLs
-                    
+                                sources = all_urls[:5]
+
                     fact_check_result = {
                         "claim": text[:200] + "..." if len(text) > 200 else text,
                         "result": {
@@ -909,8 +932,8 @@ def fact_check_text(text):
                         },
                         "status": "ANALYSIS COMPLETE"
                     }
+                    claims_found = 0 if verdict.upper() == 'NO FACTUAL CLAIMS' else 1
                 else:
-                    # Fallback response
                     fact_check_result = {
                         "claim": text[:200] + "..." if len(text) > 200 else text,
                         "result": {
@@ -921,11 +944,12 @@ def fact_check_text(text):
                         },
                         "status": "ANALYSIS COMPLETE"
                     }
-                
+                    claims_found = 1
+
                 return {
                     "fact_check_results": [fact_check_result],
                     "original_text": text,
-                    "claims_found": 1,
+                    "claims_found": claims_found,
                     "timestamp": time.time()
                 }, 200
         else:
@@ -993,15 +1017,8 @@ def fact_check_image(image_data_url, image_url):
         content = sonar_resp.json()['choices'][0]['message']['content']
         
         # Try to parse the response as JSON
-        try:
-            # Clean the content if it has "json" prefix
-            clean_content = content.strip()
-            if clean_content.startswith('json '):
-                clean_content = clean_content[5:].strip()
-            
-            parsed = json.loads(clean_content)
-            
-            # Create the result structure
+        parsed = _try_parse_json_block(content)
+        if parsed is not None:
             result = {
                 "fact_check_results": [{
                     "claim": "Image Analysis",
@@ -1012,15 +1029,12 @@ def fact_check_image(image_data_url, image_url):
                         "sources": parsed.get("sources", [])
                     }
                 }],
-                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
+                "claims_found": 0 if str(parsed.get("verdict", "")).upper() == "NO FACTUAL CLAIMS" else 1,
                 "timestamp": time.time(),
                 "source_url": image_url if image_url else None
             }
-            
             return result, 200
-            
-        except json.JSONDecodeError:
-            # If JSON parsing fails, try to extract useful information
+        else:
             if "no factual claims" in content.lower() or "no claims" in content.lower():
                 return {
                     "fact_check_results": [{
@@ -1028,7 +1042,7 @@ def fact_check_image(image_data_url, image_url):
                         "result": {
                             "verdict": "NO FACTUAL CLAIMS",
                             "confidence": 100,
-                            "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract content, or visual content without specific factual statements.",
+                            "explanation": "This image does not contain any factual claims that can be verified. It may be an artistic image, abstract, or visual content without specific factual statements.",
                             "sources": []
                         }
                     }],
@@ -1037,15 +1051,14 @@ def fact_check_image(image_data_url, image_url):
                     "source_url": image_url if image_url else None
                 }, 200
             else:
-                # Try to extract verdict and explanation from the text
                 verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
                 confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
                 explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                
+
                 verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
                 confidence = int(confidence_match.group(1)) if confidence_match else 75
                 explanation = explanation_match.group(1) if explanation_match else content
-                
+
                 return {
                     "fact_check_results": [{
                         "claim": "Image Analysis",
@@ -1056,7 +1069,7 @@ def fact_check_image(image_data_url, image_url):
                             "sources": []
                         }
                     }],
-                    "claims_found": 1,
+                    "claims_found": 0 if verdict.upper() == 'NO FACTUAL CLAIMS' else 1,
                     "timestamp": time.time(),
                     "source_url": image_url if image_url else None
                 }, 200
@@ -1221,15 +1234,8 @@ def fact_check_image_multimodal(image_data_url, image_url, custom_prompt):
         content = sonar_resp.json()['choices'][0]['message']['content']
         
         # Try to parse the response as JSON
-        try:
-            # Clean the content if it has "json" prefix
-            clean_content = content.strip()
-            if clean_content.startswith('json '):
-                clean_content = clean_content[5:].strip()
-            
-            parsed = json.loads(clean_content)
-            
-            # Create the result structure
+        parsed = _try_parse_json_block(content)
+        if parsed is not None:
             result = {
                 "fact_check_results": [{
                     "claim": "Multimodal Analysis",
@@ -1240,15 +1246,12 @@ def fact_check_image_multimodal(image_data_url, image_url, custom_prompt):
                         "sources": parsed.get("sources", [])
                     }
                 }],
-                "claims_found": 1 if parsed.get("verdict") != "NO FACTUAL CLAIMS" else 0,
+                "claims_found": 0 if str(parsed.get("verdict", "")).upper() == "NO FACTUAL CLAIMS" else 1,
                 "timestamp": time.time(),
                 "source_url": image_url if image_url else None
             }
-            
             return result, 200
-            
-        except json.JSONDecodeError:
-            # If JSON parsing fails, try to extract useful information
+        else:
             if "no factual claims" in content.lower() or "no claims" in content.lower():
                 return {
                     "fact_check_results": [{
@@ -1265,15 +1268,14 @@ def fact_check_image_multimodal(image_data_url, image_url, custom_prompt):
                     "source_url": image_url if image_url else None
                 }, 200
             else:
-                # Try to extract verdict and explanation from the text
                 verdict_match = re.search(r'"verdict":\s*"([^"]+)"', content, re.IGNORECASE)
                 confidence_match = re.search(r'"confidence":\s*(\d+)', content, re.IGNORECASE)
                 explanation_match = re.search(r'"explanation":\s*"([^"]+)"', content, re.IGNORECASE)
-                
+
                 verdict = verdict_match.group(1) if verdict_match else "INSUFFICIENT EVIDENCE"
                 confidence = int(confidence_match.group(1)) if confidence_match else 75
                 explanation = explanation_match.group(1) if explanation_match else content
-                
+
                 return {
                     "fact_check_results": [{
                         "claim": "Multimodal Analysis",
@@ -1284,7 +1286,7 @@ def fact_check_image_multimodal(image_data_url, image_url, custom_prompt):
                             "sources": []
                         }
                     }],
-                    "claims_found": 1,
+                    "claims_found": 0 if verdict.upper() == 'NO FACTUAL CLAIMS' else 1,
                     "timestamp": time.time(),
                     "source_url": image_url if image_url else None
                 }, 200
@@ -1495,7 +1497,7 @@ def _try_twitter_mobile(url: str) -> dict:
                     unique_images.append(img_url)
                     seen_urls.add(img_url)
             
-            return {"text": text_content, "images": unique_images}
+            return {"text": text_content, "images": image_urls}
     except Exception:
         pass
     return None
@@ -1654,6 +1656,7 @@ class handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        self.send_header('Access-Control-Max-Age', '86400')
         self.end_headers()
 
