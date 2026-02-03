@@ -279,6 +279,22 @@ def _dedupe(items: List[str]) -> List[str]:
     return deduped
 
 
+def _has_claim_signal(text: str) -> bool:
+    if not text:
+        return False
+    t = text.lower()
+    if any(ch.isdigit() for ch in t):
+        return True
+    if len(t.split()) >= 8:
+        return True
+    return re.search(
+        r"\\b(is|are|was|were|has|have|had|will|won|lost|died|born|founded|"
+        r"announced|said|says|claims|reports|files|accused|convicted|acquitted|"
+        r"killed|arrested|sentenced)\\b",
+        t,
+    ) is not None
+
+
 def _extract_images_from_html(soup: BeautifulSoup, base_url: str) -> List[str]:
     images: List[str] = []
     for img in soup.find_all("img"):
@@ -449,6 +465,23 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _extract_twitter_media_from_jina(url: str) -> List[str]:
+    """Best-effort media URL extraction from Jina text for X posts."""
+    try:
+        jina_text = _fetch_jina_text(url)
+        if not jina_text:
+            return []
+        media_urls = re.findall(r"https?://pbs\\.twimg\\.com/[^\\s)\\]}\"']+", jina_text)
+        cleaned = []
+        for u in media_urls:
+            if "pbs.twimg.com" in u and "?" not in u:
+                u = f\"{u}?format=jpg&name=orig\"
+            cleaned.append(u)
+        return _dedupe(cleaned)
+    except Exception:
+        return []
+
+
 def _extract_reddit(url: str) -> Optional[Dict[str, Any]]:
     try:
         json_url = _build_reddit_json_url(url)
@@ -531,6 +564,9 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
         image_urls.extend(extracted.get("images", []) or [])
         if platform == "twitter" and (text_content or image_urls):
             prefer_extracted = True
+    if platform == "twitter":
+        # Avoid generic HTML/Jina fallbacks for X posts to prevent unrelated content.
+        prefer_extracted = True
 
     html = ""
     content_type = ""
@@ -572,6 +608,9 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
         jina_text = _fetch_jina_text(url)
         if jina_text:
             text_content = jina_text
+
+    if platform == "twitter" and not image_urls:
+        image_urls.extend(_extract_twitter_media_from_jina(url))
 
     text_content = _truncate(text_content, MAX_TEXT_CHARS)
 
@@ -754,9 +793,11 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     if not text:
         return {"error": "No text provided"}, 400
 
-    claims = checker.extract_claims(text)
-    if not claims and len(text) < 280:
-        claims = [text]
+    claims = []
+    if _has_claim_signal(text):
+        claims = checker.extract_claims(text)
+        if not claims and len(text) < 280:
+            claims = [text]
 
     results = []
     for claim in claims:
@@ -808,7 +849,7 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     results: List[Dict[str, Any]] = []
 
-    if text:
+    if text and _has_claim_signal(text):
         text_claims = checker.extract_claims(text)
         if not text_claims and len(text) < 280:
             text_claims = [text]
