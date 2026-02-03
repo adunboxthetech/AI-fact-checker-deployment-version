@@ -206,11 +206,19 @@ class FactCheckerApp {
     }
 
     buildPayload(input) {
-        const isLikelyUrl = /^(https?:\/\/)[\w.-]+(?:\.[\w\.-]+)+(?:[\w\-\._~:\/?#\[\]@!$&'()*+,;=.]+)?$/i.test(input);
-        if (isLikelyUrl) {
-            return { url: input };
+        const trimmed = input.trim();
+        if (!trimmed) return { text: '' };
+
+        const hasScheme = /^https?:\/\//i.test(trimmed);
+        const noSpaces = !/\s/.test(trimmed);
+        const looksLikeDomain = /^[\w.-]+\.[a-z]{2,}(?::\d+)?(?:[\/?#].*)?$/i.test(trimmed);
+
+        if (hasScheme || (noSpaces && looksLikeDomain)) {
+            const url = hasScheme ? trimmed : `https://${trimmed}`;
+            return { url };
         }
-        return { text: input };
+
+        return { text: trimmed };
     }
 
     handleClear() {
