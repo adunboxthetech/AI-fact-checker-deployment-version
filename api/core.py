@@ -297,6 +297,7 @@ def _extract_images_from_html(soup: BeautifulSoup, base_url: str) -> List[str]:
 def _image_detection_info(url: str, text: str, image_urls: List[str]) -> Dict[str, Any]:
     image_patterns = [
         r"pic\.twitter\.com",
+        r"pbs\.twimg\.com",
         r"i\.redd\.it",
         r"preview\.redd\.it",
         r"imgur\.com",
@@ -338,6 +339,46 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
     if not match:
         return None
     tweet_id = match.group(1)
+    def _clean_media_url(media_url: Optional[str]) -> Optional[str]:
+        if not media_url:
+            return None
+        # Prefer full-size images from pbs.twimg.com
+        if "pbs.twimg.com" in media_url and "?" not in media_url:
+            return f"{media_url}?format=jpg&name=orig"
+        return media_url
+
+    try:
+        # Newer syndication endpoint with richer media details
+        result_url = "https://cdn.syndication.twimg.com/tweet-result"
+        resp = requests.get(
+            result_url,
+            params={"id": tweet_id, "lang": "en"},
+            headers=DEFAULT_HEADERS,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            text = data.get("text") or ""
+            user = data.get("user") or {}
+            title = f"Post by @{user.get('screen_name', 'user')}" if user else "Twitter/X post"
+            images: List[str] = []
+            for media in data.get("mediaDetails", []) or []:
+                media_type = (media.get("type") or "").lower()
+                if media_type in {"photo", "image"}:
+                    media_url = media.get("media_url_https") or media.get("media_url")
+                    cleaned = _clean_media_url(media_url)
+                    if cleaned:
+                        images.append(cleaned)
+                elif media_type in {"video", "animated_gif"}:
+                    preview = media.get("media_url_https") or media.get("media_url") or media.get("preview_image_url")
+                    cleaned = _clean_media_url(preview)
+                    if cleaned:
+                        images.append(cleaned)
+            if text or images:
+                return {"text": text, "title": title, "images": images}
+    except Exception:
+        pass
+
     try:
         api_url = "https://cdn.syndication.twimg.com/widgets/tweet"
         resp = requests.get(api_url, params={"id": tweet_id, "lang": "en"}, headers=DEFAULT_HEADERS, timeout=10)
@@ -348,11 +389,13 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             title = f"Post by @{user.get('screen_name', 'user')}" if user else "Twitter/X post"
             images = []
             for photo in data.get("photos", []) or []:
-                url_val = photo.get("url")
+                url_val = _clean_media_url(photo.get("url"))
                 if url_val:
                     images.append(url_val)
             if data.get("video") and data["video"].get("poster"):
-                images.append(data["video"]["poster"])
+                poster = _clean_media_url(data["video"]["poster"])
+                if poster:
+                    images.append(poster)
             return {"text": text, "title": title, "images": images}
     except Exception:
         pass
@@ -369,7 +412,19 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             text = BeautifulSoup(html, "lxml").get_text(" ", strip=True) if html else data.get("title", "")
             return {"text": text, "title": data.get("author_name") or "Twitter/X post", "images": []}
     except Exception:
-        return None
+        pass
+
+    # Last-resort: scrape via Jina and look for pbs.twimg.com media links
+    try:
+        jina_text = _fetch_jina_text(url)
+        if jina_text:
+            media_urls = re.findall(r"https?://pbs\\.twimg\\.com/[^\\s)\\]}]+", jina_text)
+            media_urls = [_clean_media_url(u) for u in media_urls if u]
+            return {"text": jina_text, "title": "Twitter/X post", "images": media_urls}
+    except Exception:
+        pass
+
+    return None
     return None
 
 
