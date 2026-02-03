@@ -347,6 +347,28 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             return f"{media_url}?format=jpg&name=orig"
         return media_url
 
+    def _pick_screen_name(data: Dict[str, Any]) -> Optional[str]:
+        if isinstance(data.get("user"), dict) and data["user"].get("screen_name"):
+            return data["user"]["screen_name"]
+        try:
+            core = data.get("core", {})
+            user = core.get("user_results", {}).get("result", {})
+            legacy = user.get("legacy", {})
+            return legacy.get("screen_name")
+        except Exception:
+            return None
+
+    def _pick_text(data: Dict[str, Any]) -> str:
+        text = data.get("text") or data.get("full_text") or ""
+        if text:
+            return text
+        note = None
+        if isinstance(data.get("note_tweet"), dict):
+            note = data["note_tweet"].get("text")
+        if not note:
+            note = data.get("note_tweet_results", {}).get("result", {}).get("text")
+        return note or ""
+
     try:
         # Newer syndication endpoint with richer media details
         result_url = "https://cdn.syndication.twimg.com/tweet-result"
@@ -358,9 +380,9 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         )
         if resp.status_code == 200:
             data = resp.json()
-            text = data.get("text") or ""
-            user = data.get("user") or {}
-            title = f"Post by @{user.get('screen_name', 'user')}" if user else "Twitter/X post"
+            text = _pick_text(data)
+            screen_name = _pick_screen_name(data)
+            title = f"Post by @{screen_name}" if screen_name else "Twitter/X post"
             images: List[str] = []
             for media in data.get("mediaDetails", []) or []:
                 media_type = (media.get("type") or "").lower()
@@ -372,6 +394,16 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
                 elif media_type in {"video", "animated_gif"}:
                     preview = media.get("media_url_https") or media.get("media_url") or media.get("preview_image_url")
                     cleaned = _clean_media_url(preview)
+                    if cleaned:
+                        images.append(cleaned)
+            if not images:
+                for photo in data.get("photos", []) or []:
+                    cleaned = _clean_media_url(photo.get("url"))
+                    if cleaned:
+                        images.append(cleaned)
+            if not images and isinstance(data.get("extended_entities"), dict):
+                for media in data["extended_entities"].get("media", []) or []:
+                    cleaned = _clean_media_url(media.get("media_url_https") or media.get("media_url"))
                     if cleaned:
                         images.append(cleaned)
             if text or images:
@@ -414,17 +446,6 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
 
-    # Last-resort: scrape via Jina and look for pbs.twimg.com media links
-    try:
-        jina_text = _fetch_jina_text(url)
-        if jina_text:
-            media_urls = re.findall(r"https?://pbs\\.twimg\\.com/[^\\s)\\]}]+", jina_text)
-            media_urls = [_clean_media_url(u) for u in media_urls if u]
-            return {"text": jina_text, "title": "Twitter/X post", "images": media_urls}
-    except Exception:
-        pass
-
-    return None
     return None
 
 
@@ -502,17 +523,20 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
     text_content = ""
     title = ""
     image_urls: List[str] = []
+    prefer_extracted = False
 
     if extracted:
         text_content = extracted.get("text", "") or ""
         title = extracted.get("title", "") or ""
         image_urls.extend(extracted.get("images", []) or [])
+        if platform == "twitter" and (text_content or image_urls):
+            prefer_extracted = True
 
     html = ""
     content_type = ""
     final_url = url
 
-    if not text_content or len(text_content.strip()) < 80:
+    if not prefer_extracted and (not text_content or len(text_content.strip()) < 80):
         try:
             html, final_url, content_type = _fetch_html(url)
         except Exception:
@@ -527,7 +551,7 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
         jsonld_text = _extract_jsonld_text(jsonld_items)
 
         body_text = _extract_body_text(html)
-        if not text_content or len(text_content.strip()) < 80:
+        if not prefer_extracted and (not text_content or len(text_content.strip()) < 80):
             if not _looks_blocked(body_text):
                 text_content = body_text
             elif jsonld_text:
@@ -541,10 +565,10 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
     text_content = _clean_text(text_content)
 
-    if not text_content and title:
+    if not text_content and title and platform != "twitter":
         text_content = title
 
-    if _looks_blocked(text_content) or not text_content:
+    if not prefer_extracted and (_looks_blocked(text_content) or not text_content):
         jina_text = _fetch_jina_text(url)
         if jina_text:
             text_content = jina_text
