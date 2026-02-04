@@ -462,6 +462,10 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
 
+    proxy = _extract_twitter_via_proxy(url)
+    if proxy:
+        return proxy
+
     return None
 
 
@@ -475,11 +479,40 @@ def _extract_twitter_media_from_jina(url: str) -> List[str]:
         cleaned = []
         for u in media_urls:
             if "pbs.twimg.com" in u and "?" not in u:
-                u = f\"{u}?format=jpg&name=orig\"
+                u = f"{u}?format=jpg&name=orig"
             cleaned.append(u)
         return _dedupe(cleaned)
     except Exception:
         return []
+
+
+def _extract_twitter_via_proxy(url: str) -> Optional[Dict[str, Any]]:
+    """Fallback to a public X proxy that exposes media URLs."""
+    match = re.search(r"/status/(\d+)", url)
+    if not match:
+        return None
+    tweet_id = match.group(1)
+    try:
+        proxy_url = f"https://api.fxtwitter.com/i/status/{tweet_id}"
+        resp = requests.get(proxy_url, headers=DEFAULT_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        tweet = data.get("tweet") or {}
+        text = tweet.get("text") or tweet.get("raw_text", {}).get("text") or ""
+        author = tweet.get("author") or {}
+        title = f"Post by @{author.get('screen_name')}" if author.get("screen_name") else "Twitter/X post"
+        images = []
+        media = tweet.get("media") or {}
+        for photo in media.get("photos", []) or []:
+            if photo.get("url"):
+                images.append(photo["url"])
+        for item in media.get("all", []) or []:
+            if item.get("type") == "photo" and item.get("url"):
+                images.append(item["url"])
+        return {"text": text, "title": title, "images": _dedupe(images)}
+    except Exception:
+        return None
 
 
 def _extract_reddit(url: str) -> Optional[Dict[str, Any]]:
