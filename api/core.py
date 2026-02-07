@@ -283,16 +283,22 @@ def _has_claim_signal(text: str) -> bool:
     if not text:
         return False
     t = text.lower()
-    if any(ch.isdigit() for ch in t):
-        return True
-    if len(t.split()) >= 8:
-        return True
-    return re.search(
-        r"\\b(is|are|was|were|has|have|had|will|won|lost|died|born|founded|"
+    # Remove noisy tokens that are common in social posts but not claims.
+    t = re.sub(r"https?://\\S+|pic\\.twitter\\.com/\\S+|@\\w+|#\\w+", " ", t)
+    t = _clean_text(t)
+    words = t.split()
+    if len(words) < 6:
+        return False
+    if re.search(
+        r"\b(is|are|was|were|has|have|had|will|won|lost|died|born|founded|"
         r"announced|said|says|claims|reports|files|accused|convicted|acquitted|"
-        r"killed|arrested|sentenced)\\b",
+        r"killed|arrested|sentenced|caused|proved|debunked)\b",
         t,
-    ) is not None
+    ):
+        return True
+    if re.search(r"\b\d{1,4}([.,]\d+)?%?\b", t):
+        return True
+    return False
 
 
 def _extract_images_from_html(soup: BeautifulSoup, base_url: str) -> List[str]:
@@ -385,6 +391,15 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             note = data.get("note_tweet_results", {}).get("result", {}).get("text")
         return note or ""
 
+    def _sanitize_twitter_text(text: str) -> str:
+        text = _clean_text(text or "")
+        # oEmbed often appends author/date after an em dash.
+        if " — " in text:
+            text = text.split(" — ", 1)[0].strip()
+        text = re.sub(r"\s*https?://t\.co/\w+\s*$", "", text, flags=re.I)
+        text = re.sub(r"\s*pic\.twitter\.com/\w+\s*$", "", text, flags=re.I)
+        return _clean_text(text)
+
     try:
         # Newer syndication endpoint with richer media details
         result_url = "https://cdn.syndication.twimg.com/tweet-result"
@@ -396,7 +411,7 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         )
         if resp.status_code == 200:
             data = resp.json()
-            text = _pick_text(data)
+            text = _sanitize_twitter_text(_pick_text(data))
             screen_name = _pick_screen_name(data)
             title = f"Post by @{screen_name}" if screen_name else "Twitter/X post"
             images: List[str] = []
@@ -432,7 +447,7 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         resp = requests.get(api_url, params={"id": tweet_id, "lang": "en"}, headers=DEFAULT_HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            text = data.get("text") or data.get("full_text") or ""
+            text = _sanitize_twitter_text(data.get("text") or data.get("full_text") or "")
             user = data.get("user") or {}
             title = f"Post by @{user.get('screen_name', 'user')}" if user else "Twitter/X post"
             images = []
@@ -447,6 +462,11 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             return {"text": text, "title": title, "images": images}
     except Exception:
         pass
+    proxy = _extract_twitter_via_proxy(url)
+    if proxy:
+        proxy["text"] = _sanitize_twitter_text(proxy.get("text", ""))
+        return proxy
+
     try:
         oembed = requests.get(
             "https://publish.twitter.com/oembed",
@@ -458,13 +478,9 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             data = oembed.json()
             html = data.get("html", "")
             text = BeautifulSoup(html, "lxml").get_text(" ", strip=True) if html else data.get("title", "")
-            return {"text": text, "title": data.get("author_name") or "Twitter/X post", "images": []}
+            return {"text": _sanitize_twitter_text(text), "title": data.get("author_name") or "Twitter/X post", "images": []}
     except Exception:
         pass
-
-    proxy = _extract_twitter_via_proxy(url)
-    if proxy:
-        return proxy
 
     return None
 
@@ -675,8 +691,10 @@ class FactChecker:
             return []
         clipped = _truncate(text, 6000)
         prompt = (
-            "Extract up to {max_claims} distinct factual claims from this text that can be verified. "
-            "Return ONLY a numbered list. If there are no factual claims, reply with 'NONE'.\n\n"
+            "Extract up to {max_claims} factual claims EXPLICITLY stated in this text. "
+            "Do not infer, assume, or use outside knowledge. "
+            "Do not generate claims about people/entities unless directly asserted in the text. "
+            "Return ONLY a numbered list. If there are no factual claims, reply with EXACTLY 'NONE'.\n\n"
             "Text: {text}"
         ).format(max_claims=max_claims, text=clipped)
 
@@ -829,8 +847,6 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     claims = []
     if _has_claim_signal(text):
         claims = checker.extract_claims(text)
-        if not claims and len(text) < 280:
-            claims = [text]
 
     results = []
     for claim in claims:
@@ -884,8 +900,6 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     if text and _has_claim_signal(text):
         text_claims = checker.extract_claims(text)
-        if not text_claims and len(text) < 280:
-            text_claims = [text]
         for claim in text_claims:
             if claim.strip():
                 results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
