@@ -361,6 +361,7 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
     if not match:
         return None
     tweet_id = match.group(1)
+
     def _clean_media_url(media_url: Optional[str]) -> Optional[str]:
         if not media_url:
             return None
@@ -400,6 +401,23 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         text = re.sub(r"\s*pic\.twitter\.com/\w+\s*$", "", text, flags=re.I)
         return _clean_text(text)
 
+    best_text = ""
+    best_title = "Twitter/X post"
+    images: List[str] = []
+
+    def _merge_candidate(text: str, title: str, candidate_images: List[str]) -> None:
+        nonlocal best_text, best_title, images
+        text = _sanitize_twitter_text(text)
+        if text and not best_text:
+            best_text = text
+        if title and best_title == "Twitter/X post":
+            best_title = title
+        for media_url in candidate_images:
+            cleaned = _clean_media_url(media_url)
+            if cleaned:
+                images.append(cleaned)
+        images = _dedupe(images)
+
     try:
         # Newer syndication endpoint with richer media details
         result_url = "https://cdn.syndication.twimg.com/tweet-result"
@@ -411,34 +429,30 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         )
         if resp.status_code == 200:
             data = resp.json()
-            text = _sanitize_twitter_text(_pick_text(data))
+            text = _pick_text(data)
             screen_name = _pick_screen_name(data)
             title = f"Post by @{screen_name}" if screen_name else "Twitter/X post"
-            images: List[str] = []
+            candidate_images: List[str] = []
             for media in data.get("mediaDetails", []) or []:
                 media_type = (media.get("type") or "").lower()
                 if media_type in {"photo", "image"}:
                     media_url = media.get("media_url_https") or media.get("media_url")
-                    cleaned = _clean_media_url(media_url)
-                    if cleaned:
-                        images.append(cleaned)
+                    if media_url:
+                        candidate_images.append(media_url)
                 elif media_type in {"video", "animated_gif"}:
                     preview = media.get("media_url_https") or media.get("media_url") or media.get("preview_image_url")
-                    cleaned = _clean_media_url(preview)
-                    if cleaned:
-                        images.append(cleaned)
-            if not images:
+                    if preview:
+                        candidate_images.append(preview)
+            if not candidate_images:
                 for photo in data.get("photos", []) or []:
-                    cleaned = _clean_media_url(photo.get("url"))
-                    if cleaned:
-                        images.append(cleaned)
-            if not images and isinstance(data.get("extended_entities"), dict):
+                    if photo.get("url"):
+                        candidate_images.append(photo.get("url"))
+            if not candidate_images and isinstance(data.get("extended_entities"), dict):
                 for media in data["extended_entities"].get("media", []) or []:
-                    cleaned = _clean_media_url(media.get("media_url_https") or media.get("media_url"))
-                    if cleaned:
-                        images.append(cleaned)
-            if text or images:
-                return {"text": text, "title": title, "images": images}
+                    media_url = media.get("media_url_https") or media.get("media_url")
+                    if media_url:
+                        candidate_images.append(media_url)
+            _merge_candidate(text, title, candidate_images)
     except Exception:
         pass
 
@@ -447,25 +461,27 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         resp = requests.get(api_url, params={"id": tweet_id, "lang": "en"}, headers=DEFAULT_HEADERS, timeout=10)
         if resp.status_code == 200:
             data = resp.json()
-            text = _sanitize_twitter_text(data.get("text") or data.get("full_text") or "")
+            text = data.get("text") or data.get("full_text") or ""
             user = data.get("user") or {}
             title = f"Post by @{user.get('screen_name', 'user')}" if user else "Twitter/X post"
-            images = []
+            candidate_images: List[str] = []
             for photo in data.get("photos", []) or []:
-                url_val = _clean_media_url(photo.get("url"))
-                if url_val:
-                    images.append(url_val)
+                if photo.get("url"):
+                    candidate_images.append(photo.get("url"))
             if data.get("video") and data["video"].get("poster"):
-                poster = _clean_media_url(data["video"]["poster"])
-                if poster:
-                    images.append(poster)
-            return {"text": text, "title": title, "images": images}
+                candidate_images.append(data["video"]["poster"])
+            _merge_candidate(text, title, candidate_images)
     except Exception:
         pass
+
+    # Critical fallback for X media extraction when syndication lacks images.
     proxy = _extract_twitter_via_proxy(url)
     if proxy:
-        proxy["text"] = _sanitize_twitter_text(proxy.get("text", ""))
-        return proxy
+        _merge_candidate(
+            proxy.get("text", ""),
+            proxy.get("title", "Twitter/X post"),
+            proxy.get("images", []),
+        )
 
     try:
         oembed = requests.get(
@@ -478,9 +494,12 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
             data = oembed.json()
             html = data.get("html", "")
             text = BeautifulSoup(html, "lxml").get_text(" ", strip=True) if html else data.get("title", "")
-            return {"text": _sanitize_twitter_text(text), "title": data.get("author_name") or "Twitter/X post", "images": []}
+            _merge_candidate(text, data.get("author_name") or "Twitter/X post", [])
     except Exception:
         pass
+
+    if best_text or images:
+        return {"text": best_text, "title": best_title, "images": images}
 
     return None
 
