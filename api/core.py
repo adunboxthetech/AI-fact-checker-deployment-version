@@ -730,7 +730,7 @@ class FactChecker:
         if response.status_code != 200:
             return []
         content = response.json()["choices"][0]["message"]["content"]
-        normalized = content.strip().lower()
+        normalized = re.sub(r"[\s\.\!\:]+", " ", content.strip().lower()).strip()
         if normalized in {"none", "no claims", "no factual claims"}:
             return []
         claims = []
@@ -738,6 +738,9 @@ class FactChecker:
             line = line.strip().lstrip("-*")
             if re.match(r"^\d+[\).]", line):
                 line = re.sub(r"^\d+[\).]\s*", "", line).strip()
+            # Defensive filter in case model returns prose instead of list.
+            if line.lower() in {"none", "no claims", "no factual claims"}:
+                continue
             if line:
                 claims.append(line)
         return claims[:max_claims]
@@ -863,9 +866,10 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     if not text:
         return {"error": "No text provided"}, 400
 
-    claims = []
-    if _has_claim_signal(text):
-        claims = checker.extract_claims(text)
+    claims = checker.extract_claims(text)
+    if not claims and len(text.split()) >= 6:
+        # Fallback keeps UX predictable when claim extraction is too strict.
+        claims = [text]
 
     results = []
     for claim in claims:
@@ -917,8 +921,10 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     results: List[Dict[str, Any]] = []
 
-    if text and _has_claim_signal(text):
+    if text:
         text_claims = checker.extract_claims(text)
+        if not text_claims and len(text.split()) >= 6:
+            text_claims = [text]
         for claim in text_claims:
             if claim.strip():
                 results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
