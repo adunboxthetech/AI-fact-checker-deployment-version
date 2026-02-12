@@ -705,6 +705,28 @@ class FactChecker:
             "Content-Type": "application/json",
         }
 
+    def _post_perplexity(self, payload: Dict[str, Any], retries: int = 3) -> Optional[requests.Response]:
+        """Retry transient upstream errors (especially rate limits)."""
+        last_response: Optional[requests.Response] = None
+        for attempt in range(retries):
+            try:
+                response = requests.post(
+                    PERPLEXITY_URL,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=30,
+                )
+                last_response = response
+                if response.status_code == 200:
+                    return response
+                if response.status_code not in {429, 500, 502, 503, 504}:
+                    return response
+            except requests.RequestException:
+                response = None
+            if attempt < retries - 1:
+                time.sleep(1.2 * (attempt + 1))
+        return last_response
+
     def extract_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[str]:
         if not text:
             return []
@@ -717,17 +739,13 @@ class FactChecker:
             "Text: {text}"
         ).format(max_claims=max_claims, text=clipped)
 
-        response = requests.post(
-            PERPLEXITY_URL,
-            headers=self.headers,
-            json={
-                "model": "sonar-pro",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 350,
-            },
-            timeout=30,
-        )
-        if response.status_code != 200:
+        payload = {
+            "model": "sonar-pro",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 350,
+        }
+        response = self._post_perplexity(payload)
+        if response is None or response.status_code != 200:
             return []
         content = response.json()["choices"][0]["message"]["content"]
         normalized = re.sub(r"[\s\.\!\:]+", " ", content.strip().lower()).strip()
@@ -757,22 +775,19 @@ class FactChecker:
             "Format your response as JSON with keys: verdict, confidence, explanation, sources"
         ).format(claim=claim)
 
-        response = requests.post(
-            PERPLEXITY_URL,
-            headers=self.headers,
-            json={
-                "model": "sonar-pro",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 500,
-            },
-            timeout=30,
-        )
+        payload = {
+            "model": "sonar-pro",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 500,
+        }
+        response = self._post_perplexity(payload)
 
-        if response.status_code != 200:
+        if response is None or response.status_code != 200:
+            status = response.status_code if response is not None else "no-response"
             return {
                 "verdict": "ERROR",
                 "confidence": 0,
-                "explanation": "Failed to verify claim",
+                "explanation": f"Failed to verify claim (upstream status: {status})",
                 "sources": [],
             }
 
@@ -825,17 +840,13 @@ class FactChecker:
         else:
             messages[0]["content"].append({"type": "image_url", "image_url": image_url})
 
-        response = requests.post(
-            PERPLEXITY_URL,
-            headers=self.headers,
-            json={
-                "model": "sonar-pro",
-                "messages": messages,
-                "max_tokens": 500,
-            },
-            timeout=30,
-        )
-        if response.status_code != 200:
+        payload = {
+            "model": "sonar-pro",
+            "messages": messages,
+            "max_tokens": 500,
+        }
+        response = self._post_perplexity(payload)
+        if response is None or response.status_code != 200:
             return []
         content = response.json()["choices"][0]["message"]["content"]
         normalized = content.strip().lower()
