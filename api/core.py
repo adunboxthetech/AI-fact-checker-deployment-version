@@ -721,6 +721,7 @@ class FactChecker:
     def _post_perplexity(self, payload: Dict[str, Any], retries: int = 3) -> Optional[PerplexityResponse]:
         """Retry transient upstream errors (especially rate limits)."""
         last_response: Optional[PerplexityResponse] = None
+        last_error: Optional[str] = None
         encoded_payload = json.dumps(payload).encode("utf-8")
         for attempt in range(retries):
             try:
@@ -741,7 +742,8 @@ class FactChecker:
                 except Exception:
                     body = ""
                 response = PerplexityResponse(status_code=int(err.code), body=body)
-            except Exception:
+            except Exception as err:
+                last_error = f"{type(err).__name__}: {err}"
                 response = None
 
             if response is not None:
@@ -752,6 +754,8 @@ class FactChecker:
                     return response
             if attempt < retries - 1:
                 time.sleep(1.2 * (attempt + 1))
+        if last_response is None and last_error:
+            return PerplexityResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
 
     def extract_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[str]:
@@ -814,10 +818,15 @@ class FactChecker:
 
         if response is None or response.status_code != 200:
             status = response.status_code if response is not None else "no-response"
+            error_detail = ""
+            if response and response.body:
+                parsed = _try_parse_json_block(response.body)
+                if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+                    error_detail = f"; {parsed['error']}"
             return {
                 "verdict": "ERROR",
                 "confidence": 0,
-                "explanation": f"Failed to verify claim (upstream status: {status})",
+                "explanation": f"Failed to verify claim (upstream status: {status}{error_detail})",
                 "sources": [],
             }
 
@@ -919,7 +928,7 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
         return {"error": "No text provided"}, 400
 
     claims = checker.extract_claims(text)
-    if not claims and len(text.split()) >= 6:
+    if not claims and text:
         # Fallback keeps UX predictable when claim extraction is too strict.
         claims = [text]
 
@@ -975,7 +984,7 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     if text:
         text_claims = checker.extract_claims(text)
-        if not text_claims and len(text.split()) >= 6:
+        if not text_claims and text:
             text_claims = [text]
         for claim in text_claims:
             if claim.strip():
