@@ -2,7 +2,10 @@ import json
 import os
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, urljoin
 
 import requests
@@ -50,6 +53,15 @@ MAX_TEXT_CHARS = 12000
 MAX_CLAIMS = 6
 MAX_IMAGE_CLAIMS = 4
 MAX_IMAGES_TO_ANALYZE = 1
+
+
+@dataclass
+class PerplexityResponse:
+    status_code: int
+    body: str
+
+    def json(self) -> Dict[str, Any]:
+        return json.loads(self.body or "{}")
 
 
 def _try_parse_json_block(s: Optional[str]) -> Optional[dict]:
@@ -697,32 +709,47 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
 class FactChecker:
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or PERPLEXITY_API_KEY
+        self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY") or PERPLEXITY_API_KEY
         if not self.api_key:
             raise ValueError("PERPLEXITY_API_KEY is not set")
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
-    def _post_perplexity(self, payload: Dict[str, Any], retries: int = 3) -> Optional[requests.Response]:
+    def _post_perplexity(self, payload: Dict[str, Any], retries: int = 3) -> Optional[PerplexityResponse]:
         """Retry transient upstream errors (especially rate limits)."""
-        last_response: Optional[requests.Response] = None
+        last_response: Optional[PerplexityResponse] = None
+        encoded_payload = json.dumps(payload).encode("utf-8")
         for attempt in range(retries):
             try:
-                response = requests.post(
+                req = urllib_request.Request(
                     PERPLEXITY_URL,
+                    data=encoded_payload,
                     headers=self.headers,
-                    json=payload,
-                    timeout=30,
+                    method="POST",
                 )
+                with urllib_request.urlopen(req, timeout=30) as upstream:
+                    body = upstream.read().decode("utf-8", errors="replace")
+                    status_code = int(getattr(upstream, "status", 200))
+                    response = PerplexityResponse(status_code=status_code, body=body)
+            except urllib_error.HTTPError as err:
+                body = ""
+                try:
+                    body = err.read().decode("utf-8", errors="replace")
+                except Exception:
+                    body = ""
+                response = PerplexityResponse(status_code=int(err.code), body=body)
+            except Exception:
+                response = None
+
+            if response is not None:
                 last_response = response
                 if response.status_code == 200:
                     return response
                 if response.status_code not in {429, 500, 502, 503, 504}:
                     return response
-            except requests.RequestException:
-                response = None
             if attempt < retries - 1:
                 time.sleep(1.2 * (attempt + 1))
         return last_response
@@ -747,7 +774,10 @@ class FactChecker:
         response = self._post_perplexity(payload)
         if response is None or response.status_code != 200:
             return []
-        content = response.json()["choices"][0]["message"]["content"]
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except Exception:
+            return []
         normalized = re.sub(r"[\s\.\!\:]+", " ", content.strip().lower()).strip()
         if normalized in {"none", "no claims", "no factual claims"}:
             return []
@@ -791,7 +821,15 @@ class FactChecker:
                 "sources": [],
             }
 
-        content = response.json()["choices"][0]["message"]["content"]
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except Exception:
+            return {
+                "verdict": "ERROR",
+                "confidence": 0,
+                "explanation": "Upstream returned an unreadable response",
+                "sources": [],
+            }
         parsed = _try_parse_json_block(content)
         if parsed is not None:
             urls: List[str] = []
@@ -848,7 +886,10 @@ class FactChecker:
         response = self._post_perplexity(payload)
         if response is None or response.status_code != 200:
             return []
-        content = response.json()["choices"][0]["message"]["content"]
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except Exception:
+            return []
         normalized = content.strip().lower()
         if normalized in {"none", "no claims", "no factual claims"}:
             return []

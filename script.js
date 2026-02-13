@@ -310,8 +310,9 @@ class FactCheckerApp {
         }
 
         if (!data.fact_check_results || data.fact_check_results.length === 0) {
-
-            this.resultsContainer.innerHTML = '<p>No factual claims found to verify.</p>';
+            const empty = document.createElement('p');
+            empty.textContent = 'No factual claims found to verify.';
+            this.resultsContainer.appendChild(empty);
         } else {
             data.fact_check_results.forEach((result, index) => {
                 const claimElement = this.createClaimElement(result, index + 1);
