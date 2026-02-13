@@ -709,9 +709,12 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
 class FactChecker:
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or os.getenv("PERPLEXITY_API_KEY") or PERPLEXITY_API_KEY
+        resolved_key = api_key or os.getenv("PERPLEXITY_API_KEY") or PERPLEXITY_API_KEY or ""
+        self.api_key = resolved_key.strip()
         if not self.api_key:
             raise ValueError("PERPLEXITY_API_KEY is not set")
+        if "ENTER_YOUR_PERPLEXITY" in self.api_key.upper():
+            raise ValueError("PERPLEXITY_API_KEY is still set to the placeholder value")
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -912,17 +915,17 @@ class FactChecker:
         return claims[:max_claims]
 
 
-def _get_checker() -> Optional[FactChecker]:
+def _get_checker() -> Tuple[Optional[FactChecker], Optional[str]]:
     try:
-        return FactChecker()
-    except Exception:
-        return None
+        return FactChecker(), None
+    except Exception as exc:
+        return None, str(exc)
 
 
 def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
-    checker = _get_checker()
+    checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": "PERPLEXITY_API_KEY not configured"}, 500
+        return {"error": checker_error or "PERPLEXITY_API_KEY not configured"}, 500
     text = _clean_text(text)
     if not text:
         return {"error": "No text provided"}, 400
@@ -946,9 +949,9 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
 
 
 def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[str]) -> Tuple[Dict[str, Any], int]:
-    checker = _get_checker()
+    checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": "PERPLEXITY_API_KEY not configured"}, 500
+        return {"error": checker_error or "PERPLEXITY_API_KEY not configured"}, 500
 
     claims = checker.extract_image_claims(image_url=image_url, image_data_url=image_data_url)
     results = []
@@ -966,9 +969,9 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
 
 
 def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
-    checker = _get_checker()
+    checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": "PERPLEXITY_API_KEY not configured"}, 500
+        return {"error": checker_error or "PERPLEXITY_API_KEY not configured"}, 500
 
     url = normalize_url(url)
     if not is_valid_url(url):
