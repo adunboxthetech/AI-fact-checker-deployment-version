@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler
 import json
 import time
+import traceback
 
 from api.core import (
     fact_check_text_input,
@@ -30,41 +31,49 @@ class handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "Not found"})
 
     def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length)
         try:
-            data = json.loads(body.decode('utf-8'))
-        except json.JSONDecodeError:
-            self._send_json(400, {"error": "Invalid JSON"})
-            return
-
-        if self.path == '/api/fact-check':
-            text = data.get('text', '')
-            url = data.get('url', '')
-            if not text and not url:
-                self._send_json(400, {"error": "No text or URL provided"})
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            try:
+                data = json.loads(body.decode('utf-8'))
+            except json.JSONDecodeError:
+                self._send_json(400, {"error": "Invalid JSON"})
                 return
-            if url:
-                response_data, status_code = fact_check_url_input(url)
-            else:
-                response_data, status_code = fact_check_text_input(text)
-            self._send_json(status_code, response_data)
-            return
 
-        if self.path == '/api/fact-check-image':
-            image_data_url = data.get('image_data_url')
-            image_url = data.get('image_url')
-            if not image_data_url and not image_url:
-                self._send_json(400, {"error": "No image data URL or image URL provided"})
+            if self.path == '/api/fact-check':
+                text = data.get('text', '')
+                url = data.get('url', '')
+                if not text and not url:
+                    self._send_json(400, {"error": "No text or URL provided"})
+                    return
+                if url:
+                    response_data, status_code = fact_check_url_input(url)
+                else:
+                    response_data, status_code = fact_check_text_input(text)
+                self._send_json(status_code, response_data)
                 return
-            if image_data_url and len(image_data_url) > 10 * 1024 * 1024:
-                self._send_json(400, {"error": "Image data URL is too large. Please use a smaller image."})
-                return
-            response_data, status_code = fact_check_image_input(image_data_url, image_url)
-            self._send_json(status_code, response_data)
-            return
 
-        self._send_json(404, {"error": "Endpoint not found"})
+            if self.path == '/api/fact-check-image':
+                image_data_url = data.get('image_data_url')
+                image_url = data.get('image_url')
+                if not image_data_url and not image_url:
+                    self._send_json(400, {"error": "No image data URL or image URL provided"})
+                    return
+                if image_data_url and len(image_data_url) > 10 * 1024 * 1024:
+                    self._send_json(400, {"error": "Image data URL is too large. Please use a smaller image."})
+                    return
+                response_data, status_code = fact_check_image_input(image_data_url, image_url)
+                self._send_json(status_code, response_data)
+                return
+
+            self._send_json(404, {"error": "Endpoint not found"})
+        except Exception as exc:
+            traceback.print_exc()
+            self._send_json(500, {
+                "error": "Internal server error",
+                "details": str(exc),
+                "type": type(exc).__name__,
+            })
 
     def do_OPTIONS(self):
         self.send_response(200)
