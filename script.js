@@ -45,9 +45,10 @@ class FactCheckerApp {
         }
         // single button handles both
         
-        // Allow Enter+Ctrl to trigger fact check
+        // Allow Enter to trigger fact check
         this.textInput.addEventListener('keydown', (e) => {
-            if (e.ctrlKey && e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
                 this.handleFactCheck();
             }
         });
@@ -697,13 +698,13 @@ class MysticalEngine {
                 float n = n1 * 0.5 + n2 * 0.25 + n3 * 0.125;
                 n = n * 0.5 + 0.5; // map to 0-1
                 
-                // Colors (Deep mystical purple/blue/cyan)
-                vec3 col1 = vec3(0.38, 0.4, 0.94); // Indigo
-                vec3 col2 = vec3(0.66, 0.33, 0.96); // Purple
-                vec3 col3 = vec3(0.1, 0.8, 0.9);   // Cyan
+                // Colors (Deep mystical purple/blue/cyan to ethereal white)
+                vec3 col1 = vec3(0.28, 0.3, 0.84); // Indigo
+                vec3 col2 = vec3(0.46, 0.23, 0.86); // Purple
+                vec3 col3 = vec3(0.85, 0.95, 1.0);  // Ethereal White/Cyan
                 
                 vec3 finalCol = mix(col1, col2, smoothstep(0.2, 0.8, n));
-                finalCol = mix(finalCol, col3, smoothstep(0.6, 1.0, n) * intensity);
+                finalCol = mix(finalCol, col3, smoothstep(0.5, 1.0, n) * (0.5 + intensity * 0.5));
                 
                 // Masking: dense at bottom, fading up
                 float mask = smoothstep(0.8, 0.0, fragCoord.y/iResolution.y);
