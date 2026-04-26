@@ -774,7 +774,7 @@ class FactChecker:
         ).format(max_claims=max_claims, text=clipped)
 
         payload = {
-            "model": "gemini-3.0-flash-preview",
+            "model": "gemini-2.0-flash",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 350,
         }
@@ -813,7 +813,7 @@ class FactChecker:
         ).format(claim=claim)
 
         payload = {
-            "model": "gemini-3.0-flash-preview",
+            "model": "gemini-2.0-flash",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 500,
         }
@@ -824,8 +824,13 @@ class FactChecker:
             error_detail = ""
             if response and response.body:
                 parsed = _try_parse_json_block(response.body)
-                if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
-                    error_detail = f"; {parsed['error']}"
+                if isinstance(parsed, dict) and "error" in parsed:
+                    if isinstance(parsed["error"], str):
+                        error_detail = f"; {parsed['error']}"
+                    else:
+                        error_detail = f"; {json.dumps(parsed['error'])}"
+                elif response.body:
+                    error_detail = f"; {response.body[:200]}"
             return {
                 "verdict": "ERROR",
                 "confidence": 0,
@@ -891,7 +896,7 @@ class FactChecker:
             messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
 
         payload = {
-            "model": "gemini-3.0-flash-preview",
+            "model": "gemini-2.0-flash",
             "messages": messages,
             "max_tokens": 500,
         }
