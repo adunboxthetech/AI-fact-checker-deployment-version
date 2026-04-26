@@ -150,6 +150,14 @@ class UrlExtractionTests(unittest.TestCase):
 
         self.assertEqual(core._retry_after_seconds(response), 29.5)
 
+    def test_retry_after_parses_millisecond_error_text(self):
+        response = core.GeminiResponse(
+            status_code=429,
+            body="Quota exceeded. Please retry in 258.066462ms.",
+        )
+
+        self.assertAlmostEqual(core._retry_after_seconds(response), 0.258066462)
+
     @patch("api.core._download_image_as_data_url", return_value=None)
     @patch("api.core.FactChecker")
     def test_image_queue_returns_per_image_failure(self, fact_checker_class, _download):
@@ -158,11 +166,19 @@ class UrlExtractionTests(unittest.TestCase):
                 self.api_key = api_key or "test-key"
                 self.last_image_error = ""
 
-            def extract_image_claims(self, image_url=None, image_data_url=None):
+            def fact_check_image_content(self, image_url=None, image_data_url=None):
                 if image_url and "bad" in image_url:
                     self.last_image_error = "Rate limit exceeded after retries"
                     return []
-                return ["Image claim"]
+                return [{
+                    "claim": "[Image] Image claim",
+                    "result": {
+                        "verdict": "TRUE",
+                        "confidence": 90,
+                        "explanation": "Verified.",
+                        "sources": ["https://example.test/source"],
+                    },
+                }]
 
         fact_checker_class.side_effect = lambda api_key=None: FakeChecker(api_key)
         parent_checker = FakeChecker("test-key")
@@ -173,7 +189,8 @@ class UrlExtractionTests(unittest.TestCase):
         )
 
         self.assertEqual(results[0]["status"], "ok")
-        self.assertEqual(results[0]["claims"], ["Image claim"])
+        self.assertEqual(results[0]["claims"], ["[Image] Image claim"])
+        self.assertEqual(results[0]["checks"][0]["result"]["verdict"], "TRUE")
         self.assertEqual(results[1]["status"], "failed")
         self.assertEqual(results[1]["reason"], "Rate limit exceeded after retries")
 

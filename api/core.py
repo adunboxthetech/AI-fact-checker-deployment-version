@@ -69,6 +69,7 @@ MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
 GEMINI_RETRY_ATTEMPTS = 3
 GEMINI_INITIAL_RETRY_DELAY_SECONDS = 2.0
 GEMINI_BACKOFF_MULTIPLIER = 2.0
+MAX_GEMINI_RETRY_DELAY_SECONDS = 8.0
 GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
@@ -151,9 +152,12 @@ def _retry_after_seconds(response: Optional[GeminiResponse]) -> Optional[float]:
                     if match:
                         return max(0.0, float(match.group(1)))
 
-    match = re.search(r"retry in\s+([\d.]+)s", response.body or "", flags=re.I)
+    match = re.search(r"retry in\s+([\d.]+)\s*(ms|s)", response.body or "", flags=re.I)
     if match:
-        return max(0.0, float(match.group(1)))
+        delay = float(match.group(1))
+        if match.group(2).lower() == "ms":
+            delay = delay / 1000
+        return max(0.0, delay)
     return None
 
 
@@ -1059,6 +1063,7 @@ class FactChecker:
                 if attempt < retries - 1:
                     retry_after = _retry_after_seconds(last_response)
                     delay = retry_after if retry_after is not None else _retry_delay_seconds(attempt)
+                    delay = min(delay, MAX_GEMINI_RETRY_DELAY_SECONDS)
                     time.sleep(delay)
         if last_response is None and last_error:
             return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
@@ -1316,6 +1321,102 @@ class FactChecker:
                 claims.append(line)
         return claims[:max_claims]
 
+    def fact_check_image_content(
+        self,
+        image_url: Optional[str],
+        image_data_url: Optional[str],
+        max_claims: int = MAX_IMAGE_CLAIMS,
+    ) -> List[Dict[str, Any]]:
+        """Analyze visible image claims and fact-check them in one Gemini call."""
+        self.last_image_error = ""
+        if not image_url and not image_data_url:
+            return []
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Analyze this image and fact-check up to {max_claims} substantive factual claims visible in it. "
+                            "The image may be a Reddit/social-media image, meme, screenshot, chart, stock card, headline, or news card. "
+                            "Use OCR on visible text, labels, numbers, and charts. Ignore browser UI, app chrome, usernames, profile pictures, "
+                            "timestamps, engagement counts, and share buttons unless they are part of the factual claim. "
+                            "Return ONLY JSON with this exact shape: "
+                            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE",'
+                            '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
+                            "Sources must be full http(s) URLs when available. If there are no factual claims, return {\"claims\":[]}."
+                        ),
+                    }
+                ],
+            }
+        ]
+        if image_data_url:
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_data_url}})
+        else:
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
+
+        payload = {
+            "model": GEMINI_PRIMARY_MODEL,
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+        }
+        response = self._post_gemini(payload)
+        if response is None or response.status_code != 200:
+            self.last_image_error = _extract_error_message(response)
+            return []
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except Exception:
+            self.last_image_error = "Upstream returned an unreadable vision response"
+            return []
+
+        parsed = _try_parse_json_block(content)
+        if isinstance(parsed, list):
+            claim_items = parsed
+        elif isinstance(parsed, dict):
+            claim_items = parsed.get("claims", [])
+        else:
+            self.last_image_error = "Upstream returned image analysis in an unexpected format"
+            return []
+        if not isinstance(claim_items, list):
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for item in claim_items[:max_claims]:
+            if not isinstance(item, dict):
+                continue
+            claim = _clean_text(str(item.get("claim", "")))
+            if not claim:
+                continue
+            sources = []
+            raw_sources = item.get("sources", [])
+            if isinstance(raw_sources, list):
+                sources = [
+                    source.strip()
+                    for source in raw_sources
+                    if isinstance(source, str) and re.match(r"^https?://", source.strip(), flags=re.I)
+                ][:5]
+            confidence = item.get("confidence", 75)
+            if isinstance(confidence, str):
+                confidence = re.sub(r"[^\d]", "", confidence)
+                confidence = int(confidence) if confidence else 75
+            else:
+                try:
+                    confidence = int(confidence)
+                except Exception:
+                    confidence = 75
+            results.append({
+                "claim": f"[Image] {claim}",
+                "result": {
+                    "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
+                    "confidence": max(0, min(100, confidence)),
+                    "explanation": item.get("explanation", "Visual analysis completed"),
+                    "sources": sources,
+                },
+            })
+        return results
+
 
 def _get_checker() -> Tuple[Optional[FactChecker], Optional[str]]:
     try:
@@ -1354,12 +1455,8 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
     if not image_data_url and image_url:
         image_data_url = _download_image_as_data_url(image_url)
 
-    claims = checker.extract_image_claims(image_url=image_url, image_data_url=image_data_url)
+    results = checker.fact_check_image_content(image_url=image_url, image_data_url=image_data_url)
     image_analysis_error = checker.last_image_error
-    results = []
-    for claim in claims:
-        if claim.strip():
-            results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
 
     response = {
         "original_image": original_image,
@@ -1377,7 +1474,7 @@ def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
     try:
         checker = FactChecker(api_key=api_key)
         image_data_url = _download_image_as_data_url(image_url)
-        claims = checker.extract_image_claims(
+        checks = checker.fact_check_image_content(
             image_url=None if image_data_url else image_url,
             image_data_url=image_data_url,
         )
@@ -1387,11 +1484,13 @@ def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
                 "status": "failed",
                 "reason": checker.last_image_error,
                 "claims": [],
+                "checks": [],
             }
         return {
             "image_url": image_url,
             "status": "ok",
-            "claims": claims,
+            "claims": [item.get("claim", "") for item in checks if item.get("claim")],
+            "checks": checks,
         }
     except Exception as exc:
         return {
@@ -1424,6 +1523,7 @@ def _analyze_image_urls_with_queue(checker: FactChecker, image_urls: List[str]) 
                     "status": "failed",
                     "reason": f"{type(exc).__name__}: {exc}",
                     "claims": [],
+                    "checks": [],
                 }
 
     return [result for result in results if result is not None]
@@ -1461,9 +1561,11 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     if should_analyze_images:
         image_analysis_results = _analyze_image_urls_with_queue(checker, image_urls)
         for image_result in image_analysis_results:
-            for claim in image_result.get("claims", []):
-                if claim.strip():
-                    results.append({"claim": f"[Image] {claim}", "result": checker.fact_check_claim(claim)})
+            checks = image_result.get("checks", [])
+            if isinstance(checks, list):
+                for item in checks:
+                    if isinstance(item, dict) and item.get("claim") and item.get("result"):
+                        results.append(item)
 
     response = {
         "original_text": text,
