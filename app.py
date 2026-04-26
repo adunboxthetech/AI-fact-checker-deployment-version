@@ -23,12 +23,12 @@ CORS(app)
 
 @app.route('/')
 def home():
-    return app.send_from_directory('.', 'index.html')
+    from flask import send_from_directory; return send_from_directory('.', 'index.html')
 
 
 @app.route('/<path:filename>')
 def serve_static(filename):
-    return app.send_from_directory('.', filename)
+    from flask import send_from_directory; return send_from_directory('.', filename)
 
 
 @app.route('/health')

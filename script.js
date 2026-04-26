@@ -651,7 +651,6 @@ class MysticalEngine {
         this.scene = new THREE.Scene();
         this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
         this.renderer = new THREE.WebGLRenderer({ canvas: this.webglCanvas, alpha: true, antialias: true });
-        this.resizeWebGL();
         
         const fragmentShader = `
             uniform float iTime;
@@ -734,6 +733,8 @@ class MysticalEngine {
         
         const mesh = new THREE.Mesh(geometry, material);
         this.scene.add(mesh);
+        
+        this.resizeWebGL();
         
         this.clock = new THREE.Clock();
         this.animateWebGL();
