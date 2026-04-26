@@ -356,7 +356,17 @@ class FactCheckerApp {
             empty.textContent = data.analysis_error ? 'Analysis could not complete.' : 'No factual claims found to verify.';
             this.resultsContainer.appendChild(empty);
         } else {
-            data.fact_check_results.forEach((result, index) => {
+            let allClaims = [];
+            data.fact_check_results.forEach((result) => {
+                const subClaims = this.extractSubClaims(result);
+                if (subClaims && subClaims.length > 0) {
+                    allClaims.push(...subClaims);
+                } else {
+                    allClaims.push(result);
+                }
+            });
+
+            allClaims.forEach((result, index) => {
                 const claimElement = this.createClaimElement(result, index + 1);
                 this.resultsContainer.appendChild(claimElement);
             });
@@ -364,6 +374,92 @@ class FactCheckerApp {
         
         this.resultsSection.classList.remove('hidden');
         this.resultsSection.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    extractSubClaims(result) {
+        if (!result || !result.result || !result.result.explanation) return null;
+        
+        let exp = result.result.explanation;
+        if (typeof exp !== 'string') return null;
+
+        try {
+            let jsonStr = exp;
+            
+            if (jsonStr.includes('```')) {
+                const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+                if (match && match[1]) {
+                    jsonStr = match[1];
+                }
+            }
+            
+            if (jsonStr.trim().startsWith('json ')) {
+                jsonStr = jsonStr.trim().substring(5);
+            }
+
+            const processParsedJson = (parsed) => {
+                let claimsArray = null;
+                if (Array.isArray(parsed)) {
+                    claimsArray = parsed;
+                } else if (parsed.claims && Array.isArray(parsed.claims)) {
+                    claimsArray = parsed.claims;
+                } else if (parsed.fact_check_results && Array.isArray(parsed.fact_check_results)) {
+                    claimsArray = parsed.fact_check_results;
+                }
+                
+                if (claimsArray && claimsArray.length > 0 && claimsArray[0].claim) {
+                    return claimsArray.map(c => {
+                        return {
+                            claim: c.claim,
+                            result: {
+                                verdict: c.verdict || (c.result && c.result.verdict) || 'UNKNOWN',
+                                explanation: c.explanation || (c.result && c.result.explanation) || '',
+                                confidence: c.confidence || (c.result && c.result.confidence) || result.result.confidence || null,
+                                sources: c.sources || (c.result && c.result.sources) || result.result.sources || []
+                            }
+                        };
+                    });
+                }
+                return null;
+            };
+
+            try {
+                return processParsedJson(JSON.parse(jsonStr));
+            } catch (e) {
+                let firstBrace = jsonStr.indexOf('{');
+                let firstBracket = jsonStr.indexOf('[');
+                let startIdx = -1;
+                
+                if (firstBrace !== -1 && firstBracket !== -1) startIdx = Math.min(firstBrace, firstBracket);
+                else if (firstBrace !== -1) startIdx = firstBrace;
+                else if (firstBracket !== -1) startIdx = firstBracket;
+                
+                if (startIdx !== -1) {
+                    let lastBrace = jsonStr.lastIndexOf('}');
+                    let lastBracket = jsonStr.lastIndexOf(']');
+                    let endIdx = -1;
+                    
+                    if (lastBrace !== -1 && lastBracket !== -1) endIdx = Math.max(lastBrace, lastBracket);
+                    else if (lastBrace !== -1) endIdx = lastBrace;
+                    else if (lastBracket !== -1) endIdx = lastBracket;
+                    
+                    if (endIdx > startIdx) {
+                        let cleanJson = jsonStr.substring(startIdx, endIdx + 1);
+                        cleanJson = cleanJson.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+                        try {
+                            return processParsedJson(JSON.parse(cleanJson));
+                        } catch (innerE) {
+                            try {
+                                let fixedJson = cleanJson.replace(/,\s*([}\]])/g, '$1');
+                                return processParsedJson(JSON.parse(fixedJson));
+                            } catch (e3) {}
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Error extracting sub-claims", e);
+        }
+        return null;
     }
 
     createClaimElement(result, index) {
@@ -394,50 +490,32 @@ class FactCheckerApp {
         const sourcesHtml = this.renderSources(extractedSources);
         
         if (typeof explanation === 'string') {
-            // Check if explanation contains JSON-like content
-            if (explanation.includes('"verdict"') || explanation.includes('"confidence"') || explanation.includes('"explanation"')) {
+            if (explanation.trim().startsWith('{') || explanation.trim().startsWith('[')) {
                 try {
-                    // Try to extract JSON from the explanation
                     let jsonStr = explanation;
-                    
-                    // Remove "json " prefix if present
                     if (explanation.startsWith('json ')) {
                         jsonStr = explanation.substring(5);
                     }
-                    
-                    // Try to parse as JSON
                     const parsed = JSON.parse(jsonStr);
                     if (parsed.explanation) {
                         explanation = parsed.explanation;
                     } else if (parsed.verdict) {
-                        // If no explanation field, create one from other fields
                         explanation = `Verdict: ${parsed.verdict}`;
                         if (parsed.confidence) {
                             explanation += ` (Confidence: ${parsed.confidence}%)`;
                         }
                     }
                     
-                    // Extract sources from the parsed JSON if available
                     if (parsed.sources && Array.isArray(parsed.sources) && parsed.sources.length > 0) {
                         extractedSources = parsed.sources;
                     }
                 } catch (e) {
-                    // If parsing fails, clean up the explanation by removing JSON artifacts
+                    // Do not aggressively strip brackets and braces if JSON parse fails.
+                    // Instead, keep the raw explanation as is, but remove any wrapping markdown.
                     explanation = explanation
-                        .replace(/^json\s*/, '') // Remove "json " prefix
-                        .replace(/[{}"]/g, '') // Remove braces and quotes
-                        .replace(/,/g, ', ') // Replace commas with comma + space
-                        .replace(/verdict:\s*/gi, '') // Remove "verdict:" labels
-                        .replace(/confidence:\s*\d+/gi, '') // Remove confidence labels
-                        .replace(/sources:\s*\[.*?\]/gi, '') // Remove sources array
-                        .replace(/\s+/g, ' ') // Normalize whitespace
+                        .replace(/^```(?:json)?\s*/i, '')
+                        .replace(/\s*```$/i, '')
                         .trim();
-                    
-                    // Try to extract URLs from the cleaned explanation as fallback sources
-                    const urlMatches = explanation.match(/https?:\/\/[^\s]+/g);
-                    if (urlMatches && urlMatches.length > 0) {
-                        extractedSources = urlMatches;
-                    }
                 }
             }
         }
@@ -469,12 +547,13 @@ class FactCheckerApp {
     }
 
     getVerdictClass(verdict) {
-        if (verdict.includes('true') && !verdict.includes('false')) {
+        verdict = verdict.toLowerCase();
+        if (verdict.includes('partial')) {
+            return 'partial';
+        } else if (verdict.includes('true') && !verdict.includes('false')) {
             return 'true';
         } else if (verdict.includes('false')) {
             return 'false';
-        } else if (verdict.includes('partial')) {
-            return 'partial';
         }
         return 'partial';
     }
