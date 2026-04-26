@@ -12,8 +12,8 @@ import requests
 from bs4 import BeautifulSoup
 from readability import Document
 
-PERPLEXITY_API_KEY = os.getenv('PERPLEXITY_API_KEY')
-PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -56,7 +56,7 @@ MAX_IMAGES_TO_ANALYZE = 1
 
 
 @dataclass
-class PerplexityResponse:
+class GeminiResponse:
     status_code: int
     body: str
 
@@ -709,27 +709,27 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
 class FactChecker:
     def __init__(self, api_key: Optional[str] = None):
-        resolved_key = api_key or os.getenv("PERPLEXITY_API_KEY") or PERPLEXITY_API_KEY or ""
+        resolved_key = api_key or os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY or ""
         self.api_key = resolved_key.strip()
         if not self.api_key:
-            raise ValueError("PERPLEXITY_API_KEY is not set")
-        if "ENTER_YOUR_PERPLEXITY" in self.api_key.upper():
-            raise ValueError("PERPLEXITY_API_KEY is still set to the placeholder value")
+            raise ValueError("GEMINI_API_KEY is not set")
+        if "ENTER_YOUR_GEMINI" in self.api_key.upper():
+            raise ValueError("GEMINI_API_KEY is still set to the placeholder value")
         self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
 
-    def _post_perplexity(self, payload: Dict[str, Any], retries: int = 3) -> Optional[PerplexityResponse]:
+    def _post_gemini(self, payload: Dict[str, Any], retries: int = 3) -> Optional[GeminiResponse]:
         """Retry transient upstream errors (especially rate limits)."""
-        last_response: Optional[PerplexityResponse] = None
+        last_response: Optional[GeminiResponse] = None
         last_error: Optional[str] = None
         encoded_payload = json.dumps(payload).encode("utf-8")
         for attempt in range(retries):
             try:
                 req = urllib_request.Request(
-                    PERPLEXITY_URL,
+                    GEMINI_URL,
                     data=encoded_payload,
                     headers=self.headers,
                     method="POST",
@@ -737,14 +737,14 @@ class FactChecker:
                 with urllib_request.urlopen(req, timeout=30) as upstream:
                     body = upstream.read().decode("utf-8", errors="replace")
                     status_code = int(getattr(upstream, "status", 200))
-                    response = PerplexityResponse(status_code=status_code, body=body)
+                    response = GeminiResponse(status_code=status_code, body=body)
             except urllib_error.HTTPError as err:
                 body = ""
                 try:
                     body = err.read().decode("utf-8", errors="replace")
                 except Exception:
                     body = ""
-                response = PerplexityResponse(status_code=int(err.code), body=body)
+                response = GeminiResponse(status_code=int(err.code), body=body)
             except Exception as err:
                 last_error = f"{type(err).__name__}: {err}"
                 response = None
@@ -758,7 +758,7 @@ class FactChecker:
             if attempt < retries - 1:
                 time.sleep(1.2 * (attempt + 1))
         if last_response is None and last_error:
-            return PerplexityResponse(status_code=0, body=json.dumps({"error": last_error}))
+            return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
 
     def extract_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[str]:
@@ -774,11 +774,11 @@ class FactChecker:
         ).format(max_claims=max_claims, text=clipped)
 
         payload = {
-            "model": "sonar-pro",
+            "model": "gemini-3.0-flash-preview",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 350,
         }
-        response = self._post_perplexity(payload)
+        response = self._post_gemini(payload)
         if response is None or response.status_code != 200:
             return []
         try:
@@ -813,11 +813,11 @@ class FactChecker:
         ).format(claim=claim)
 
         payload = {
-            "model": "sonar-pro",
+            "model": "gemini-3.0-flash-preview",
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": 500,
         }
-        response = self._post_perplexity(payload)
+        response = self._post_gemini(payload)
 
         if response is None or response.status_code != 200:
             status = response.status_code if response is not None else "no-response"
@@ -865,7 +865,7 @@ class FactChecker:
             "verdict": "ANALYSIS COMPLETE",
             "confidence": 75,
             "explanation": content,
-            "sources": urls[:5] if urls else ["Perplexity Sonar Analysis"],
+            "sources": urls[:5] if urls else ["Google Gemini Analysis"],
         }
 
     def extract_image_claims(self, image_url: Optional[str], image_data_url: Optional[str], max_claims: int = MAX_IMAGE_CLAIMS) -> List[str]:
@@ -886,16 +886,16 @@ class FactChecker:
             }
         ]
         if image_data_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_data_url})
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_data_url}})
         else:
-            messages[0]["content"].append({"type": "image_url", "image_url": image_url})
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
 
         payload = {
-            "model": "sonar-pro",
+            "model": "gemini-3.0-flash-preview",
             "messages": messages,
             "max_tokens": 500,
         }
-        response = self._post_perplexity(payload)
+        response = self._post_gemini(payload)
         if response is None or response.status_code != 200:
             return []
         try:
@@ -925,7 +925,7 @@ def _get_checker() -> Tuple[Optional[FactChecker], Optional[str]]:
 def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "PERPLEXITY_API_KEY not configured"}, 500
+        return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
     text = _clean_text(text)
     if not text:
         return {"error": "No text provided"}, 400
@@ -951,7 +951,7 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
 def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[str]) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "PERPLEXITY_API_KEY not configured"}, 500
+        return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
 
     claims = checker.extract_image_claims(image_url=image_url, image_data_url=image_data_url)
     results = []
@@ -971,7 +971,7 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
 def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "PERPLEXITY_API_KEY not configured"}, 500
+        return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
 
     url = normalize_url(url)
     if not is_valid_url(url):

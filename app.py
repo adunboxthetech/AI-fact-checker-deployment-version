@@ -11,7 +11,7 @@ except Exception:
     pass
 
 from api.core import (
-    PERPLEXITY_API_KEY,
+    GEMINI_API_KEY,
     fact_check_text_input,
     fact_check_url_input,
     fact_check_image_input,
@@ -37,7 +37,7 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": time.time(),
-        "api_key_set": bool(PERPLEXITY_API_KEY),
+        "api_key_set": bool(GEMINI_API_KEY),
     })
 
 
