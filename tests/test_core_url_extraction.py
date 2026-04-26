@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -23,6 +24,59 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(result["text"], "The fall of Chegg")
         self.assertEqual(result["image_urls"], ["https://i.redd.it/example.jpeg"])
 
+    @patch("api.core.requests.get")
+    def test_reddit_json_falls_back_to_api_reddit(self, requests_get):
+        class FakeResponse:
+            def __init__(self, status_code, payload=None):
+                self.status_code = status_code
+                self._payload = payload
+
+            def json(self):
+                return self._payload
+
+        payload = [{
+            "data": {
+                "children": [{
+                    "data": {
+                        "title": "The fall of Chegg",
+                        "selftext": "",
+                        "url_overridden_by_dest": "https://i.redd.it/example.jpeg",
+                        "preview": {"images": []},
+                    }
+                }]
+            }
+        }]
+        requests_get.side_effect = [
+            FakeResponse(403),
+            FakeResponse(200, payload),
+        ]
+
+        result = core._extract_reddit_json("https://www.reddit.com/r/test/comments/abc/example/")
+
+        self.assertEqual(result["title"], "The fall of Chegg")
+        self.assertEqual(result["images"], ["https://i.redd.it/example.jpeg"])
+        self.assertIn("api.reddit.com", requests_get.call_args_list[1].args[0])
+
+    @patch("api.core.requests.get")
+    def test_reddit_old_html_extracts_primary_image(self, requests_get):
+        class FakeResponse:
+            status_code = 200
+            url = "https://old.reddit.com/r/test/comments/abc/example/"
+            text = """
+            <div class="thing" data-fullname="t3_abc" data-url="https://i.redd.it/example.jpeg">
+              <a class="title may-blank outbound" href="https://i.redd.it/example.jpeg">The fall of Chegg</a>
+              <img src="//preview.redd.it/example.jpeg?width=720&auto=webp">
+            </div>
+            """
+
+        requests_get.return_value = FakeResponse()
+
+        result = core._extract_reddit_old_html("https://www.reddit.com/r/test/comments/abc/example/")
+
+        self.assertEqual(result["title"], "The fall of Chegg")
+        self.assertIn("https://i.redd.it/example.jpeg", result["images"])
+        self.assertIn("https://preview.redd.it/example.jpeg?width=720&auto=webp", result["images"])
+
     @patch("api.core._fetch_html")
     def test_direct_image_without_extension_is_kept_by_content_type(self, fetch_html):
         fetch_html.return_value = ("", "https://cdn.example.test/media?id=123", "image/jpeg")
@@ -31,6 +85,15 @@ class UrlExtractionTests(unittest.TestCase):
 
         self.assertEqual(result["image_urls"], ["https://cdn.example.test/media?id=123"])
         self.assertTrue(result["image_detection_info"]["has_images"])
+
+    def test_filter_image_urls_dedupes_preview_variants(self):
+        images = core._filter_image_urls([
+            "https://i.redd.it/example.jpeg",
+            "https://preview.redd.it/example.jpeg?width=720&auto=webp",
+            "https://preview.redd.it/example.jpeg?width=108&auto=webp",
+        ])
+
+        self.assertEqual(images, ["https://i.redd.it/example.jpeg"])
 
     def test_binary_noise_is_treated_as_blocked_content(self):
         self.assertTrue(core._looks_blocked("\ufffd" * 40 + "not useful text" * 20))
@@ -92,6 +155,27 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(results[0]["claims"], ["Image claim"])
         self.assertEqual(results[1]["status"], "failed")
         self.assertEqual(results[1]["reason"], "Rate limit exceeded after retries")
+
+    @patch.object(core.FactChecker, "_post_gemini")
+    def test_extract_image_claims_filters_intro_line(self, post_gemini):
+        checker = core.FactChecker(api_key="test-key")
+        post_gemini.return_value = core.GeminiResponse(
+            status_code=200,
+            body=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": (
+                            "Here are the factual claims from the image:\n"
+                            "1. Chegg Inc is identified as the first company officially wiped out by AI."
+                        )
+                    }
+                }]
+            }),
+        )
+
+        claims = checker.extract_image_claims(image_url="https://i.redd.it/example.jpeg", image_data_url=None)
+
+        self.assertEqual(claims, ["Chegg Inc is identified as the first company officially wiped out by AI."])
 
     @patch("api.core._analyze_image_urls_with_queue")
     @patch("api.core.extract_content_from_url")

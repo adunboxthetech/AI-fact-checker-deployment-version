@@ -248,11 +248,24 @@ def _remote_url_is_image(url: str) -> bool:
         return False
 
 
+def _image_content_key(url: str) -> str:
+    parsed = urlparse(url)
+    basename = parsed.path.rstrip("/").rsplit("/", 1)[-1].lower()
+    if re.search(r"\.(jpg|jpeg|png|gif|webp|svg)$", basename, flags=re.I):
+        return basename
+    return f"{parsed.netloc.lower()}{parsed.path.lower()}"
+
+
 def _filter_image_urls(image_urls: List[str], known_image_urls: Optional[List[str]] = None) -> List[str]:
     known = set(known_image_urls or [])
     filtered: List[str] = []
+    content_keys = set()
     for img in _dedupe([u for u in image_urls if u]):
         if img in known or _is_image_like(img) or _remote_url_is_image(img):
+            content_key = _image_content_key(img)
+            if content_key in content_keys:
+                continue
+            content_keys.add(content_key)
             filtered.append(img)
         if len(filtered) >= 10:
             break
@@ -490,6 +503,7 @@ def _extract_images_from_html(soup: BeautifulSoup, base_url: str) -> List[str]:
 
 def _image_detection_info(url: str, text: str, image_urls: List[str]) -> Dict[str, Any]:
     image_patterns = [
+        r"reddit\.com/r/.+/comments/",
         r"pic\.twitter\.com",
         r"pbs\.twimg\.com",
         r"i\.redd\.it",
@@ -524,6 +538,123 @@ def _build_reddit_json_url(url: str) -> str:
     if not path.endswith(".json"):
         path += ".json"
     return urlunparse(parsed._replace(path=path, query=urlencode({"raw_json": "1"})))
+
+
+def _reddit_post_id(url: str) -> Optional[str]:
+    match = re.search(r"/comments/([a-z0-9]+)/", urlparse(url).path, flags=re.I)
+    return match.group(1) if match else None
+
+
+def _reddit_request_candidates(url: str) -> List[str]:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    candidates = [_build_reddit_json_url(url)]
+    if path:
+        candidates.append(urlunparse(parsed._replace(netloc="api.reddit.com", path=path, query=urlencode({"raw_json": "1"}))))
+    post_id = _reddit_post_id(url)
+    if post_id:
+        candidates.append(f"https://www.reddit.com/by_id/t3_{post_id}.json?raw_json=1")
+        candidates.append(f"https://api.reddit.com/by_id/t3_{post_id}?raw_json=1")
+    return _dedupe(candidates)
+
+
+def _reddit_old_url(url: str) -> str:
+    parsed = urlparse(url)
+    return urlunparse(parsed._replace(netloc="old.reddit.com", query="", fragment=""))
+
+
+def _reddit_post_from_json(data: Any) -> Optional[Dict[str, Any]]:
+    try:
+        if isinstance(data, list):
+            return data[0]["data"]["children"][0]["data"]
+        if isinstance(data, dict):
+            children = data.get("data", {}).get("children", [])
+            if children:
+                return children[0].get("data")
+    except Exception:
+        return None
+    return None
+
+
+def _extract_reddit_json(url: str) -> Optional[Dict[str, Any]]:
+    headers = {
+        **BROWSER_HEADERS,
+        "User-Agent": "AI-Fact-Checker/1.0 by u/ad_unboxthetech",
+        "Accept": "application/json,text/html;q=0.9,*/*;q=0.8",
+    }
+    for json_url in _reddit_request_candidates(url):
+        try:
+            resp = requests.get(json_url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                continue
+            post = _reddit_post_from_json(resp.json())
+            if not post:
+                continue
+            title = post.get("title", "")
+            body = post.get("selftext", "")
+            text = _clean_text(f"{title} {body}")
+            images: List[str] = []
+            if post.get("url_overridden_by_dest") and _is_image_like(post["url_overridden_by_dest"]):
+                images.append(post["url_overridden_by_dest"])
+            preview = post.get("preview", {}).get("images", [])
+            for img in preview:
+                source = img.get("source", {}).get("url")
+                if source:
+                    images.append(source.replace("&amp;", "&"))
+                for resolution in img.get("resolutions", []) or []:
+                    url_value = resolution.get("url")
+                    if url_value:
+                        images.append(url_value.replace("&amp;", "&"))
+            media_meta = post.get("media_metadata") or {}
+            for media in media_meta.values():
+                if media.get("e") == "Image" and media.get("s"):
+                    src = media["s"].get("u") or media["s"].get("gif")
+                    if src:
+                        images.append(src.replace("&amp;", "&"))
+            return {"text": text, "title": title, "images": _dedupe(images)}
+        except Exception:
+            continue
+    return None
+
+
+def _extract_reddit_old_html(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        post_id = _reddit_post_id(url)
+        resp = requests.get(_reddit_old_url(url), headers=BROWSER_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            return None
+        soup = BeautifulSoup(resp.text, "lxml")
+        thing = soup.find(attrs={"data-fullname": f"t3_{post_id}"}) if post_id else None
+        if thing is None:
+            thing = soup.find("div", class_=lambda value: value and "thing" in value.split())
+        if thing is None:
+            return None
+
+        title_node = thing.find("a", class_=lambda value: value and "title" in value.split())
+        title = title_node.get_text(" ", strip=True) if title_node else ""
+        body_node = soup.find("div", class_=lambda value: value and "usertext-body" in value.split())
+        body = body_node.get_text(" ", strip=True) if body_node else ""
+        text = _clean_text(f"{title} {body}")
+        images: List[str] = []
+
+        for attr in ["data-url", "data-media-url"]:
+            value = thing.get(attr)
+            if value and _is_image_like(value):
+                images.append(value)
+        for link in thing.find_all("a"):
+            href = link.get("href")
+            if href and _is_image_like(href):
+                images.append(_resolve_url(resp.url, href))
+        for img in thing.find_all("img"):
+            src = img.get("src")
+            if src:
+                images.append(_resolve_url(resp.url, src))
+
+        if not text and not images:
+            return None
+        return {"text": text, "title": title, "images": _dedupe([img for img in images if img])}
+    except Exception:
+        return None
 
 
 def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
@@ -721,33 +852,7 @@ def _extract_twitter_via_proxy(url: str) -> Optional[Dict[str, Any]]:
 
 
 def _extract_reddit(url: str) -> Optional[Dict[str, Any]]:
-    try:
-        json_url = _build_reddit_json_url(url)
-        resp = requests.get(json_url, headers=BROWSER_HEADERS, timeout=10)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        post = data[0]["data"]["children"][0]["data"]
-        title = post.get("title", "")
-        body = post.get("selftext", "")
-        text = _clean_text(f"{title} {body}")
-        images: List[str] = []
-        if post.get("url_overridden_by_dest") and _is_image_like(post["url_overridden_by_dest"]):
-            images.append(post["url_overridden_by_dest"])
-        preview = post.get("preview", {}).get("images", [])
-        for img in preview:
-            source = img.get("source", {}).get("url")
-            if source:
-                images.append(source.replace("&amp;", "&"))
-        media_meta = post.get("media_metadata") or {}
-        for media in media_meta.values():
-            if media.get("e") == "Image" and media.get("s"):
-                src = media["s"].get("u") or media["s"].get("gif")
-                if src:
-                    images.append(src.replace("&amp;", "&"))
-        return {"text": text, "title": title, "images": images}
-    except Exception:
-        return None
+    return _extract_reddit_json(url) or _extract_reddit_old_html(url)
 
 
 def _extract_oembed(url: str, endpoint: str) -> Optional[Dict[str, Any]]:
@@ -1177,6 +1282,8 @@ class FactChecker:
             line = line.strip().lstrip("-*")
             if re.match(r"^\d+[\).]", line):
                 line = re.sub(r"^\d+[\).]\s*", "", line).strip()
+            if re.match(r"^(here are|factual claims|claims from the image)\b", line, flags=re.I):
+                continue
             if line:
                 claims.append(line)
         return claims[:max_claims]
