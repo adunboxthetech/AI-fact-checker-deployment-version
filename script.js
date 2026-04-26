@@ -17,6 +17,8 @@ class FactCheckerApp {
         this.imageDrop = document.getElementById('imageDrop');
         this.imageInput = document.getElementById('imageInput');
         this.imagePreview = document.getElementById('imagePreview');
+        this.ambientGradient = document.getElementById('ambientGradient');
+        this.welcomeSection = document.getElementById('welcomeSection');
         this.analyzeImageBtn = null;
     }
 
@@ -49,6 +51,24 @@ class FactCheckerApp {
                 this.handleFactCheck();
             }
         });
+
+        // Ambient gradient interaction & auto-resize textarea
+        const updateGradient = () => {
+            if (this.ambientGradient) {
+                if (this.textInput.value.trim().length > 0 || document.activeElement === this.textInput) {
+                    this.ambientGradient.classList.add('active');
+                } else {
+                    this.ambientGradient.classList.remove('active');
+                }
+            }
+        };
+        this.textInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (Math.min(this.scrollHeight, 200)) + 'px';
+            updateGradient();
+        });
+        this.textInput.addEventListener('focus', updateGradient);
+        this.textInput.addEventListener('blur', updateGradient);
     }
 
     async loadImages(files) {
@@ -145,7 +165,7 @@ class FactCheckerApp {
         const hasImage = Boolean(this.imageDataUrl);
         const icon = this.factCheckBtn.querySelector('i');
         const label = this.factCheckBtn.querySelector('.btn-label');
-        if (icon) icon.className = `fas ${hasImage ? 'fa-photo-film' : 'fa-magnifying-glass'}`;
+        if (icon) icon.className = `fas fa-arrow-up`;
         if (label) label.textContent = hasImage ? 'Analyze Image' : 'Fact Check Now';
     }
 
@@ -223,11 +243,15 @@ class FactCheckerApp {
 
     handleClear() {
         this.textInput.value = '';
+        this.textInput.style.height = 'auto';
         this.hideResults();
+        if (this.welcomeSection) this.welcomeSection.classList.remove('hidden');
+        if (this.ambientGradient) this.ambientGradient.classList.remove('active');
         this.textInput.focus();
     }
 
     showLoading() {
+        if (this.welcomeSection) this.welcomeSection.classList.add('hidden');
         this.loadingSection.classList.remove('hidden');
         this.resultsSection.classList.add('hidden');
         this.factCheckBtn.disabled = true;
