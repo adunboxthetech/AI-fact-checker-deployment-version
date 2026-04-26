@@ -254,6 +254,50 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertIn("image_analysis_skipped_reason", response)
         analyze_images.assert_not_called()
 
+    @patch("api.core._analyze_image_urls_with_queue")
+    @patch("api.core.extract_content_from_url")
+    @patch("api.core._get_checker")
+    def test_url_fact_check_skips_short_title_text_for_image_posts(
+        self,
+        get_checker,
+        extract_content,
+        analyze_images,
+    ):
+        class FakeChecker:
+            api_key = "test-key"
+            last_text_error = ""
+
+            def fact_check_text_claims(self, text):
+                raise AssertionError("short image-post title should not consume a text model call")
+
+        get_checker.return_value = (FakeChecker(), None)
+        extract_content.return_value = {
+            "text": "The fall of Chegg",
+            "title": "The fall of Chegg",
+            "image_urls": ["https://i.redd.it/example.jpeg"],
+            "image_detection_info": {"has_images": True, "image_detected": True, "message": ""},
+        }
+        analyze_images.return_value = [{
+            "image_url": "https://i.redd.it/example.jpeg",
+            "status": "ok",
+            "claims": ["[Image] Chegg fell sharply."],
+            "checks": [{
+                "claim": "[Image] Chegg fell sharply.",
+                "result": {
+                    "verdict": "TRUE",
+                    "confidence": 90,
+                    "explanation": "Verified.",
+                    "sources": ["https://example.test/source"],
+                },
+            }],
+        }]
+
+        response, status = core.fact_check_url_input("https://reddit.com/r/test/comments/abc/title/")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response["claims_found"], 1)
+        self.assertEqual(response["fact_check_results"][0]["claim"], "[Image] Chegg fell sharply.")
+
 
 if __name__ == "__main__":
     unittest.main()

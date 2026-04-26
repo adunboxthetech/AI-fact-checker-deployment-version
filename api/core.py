@@ -1547,7 +1547,8 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     results: List[Dict[str, Any]] = []
     text_analysis_error = ""
 
-    if text:
+    should_analyze_text = bool(text) and (_has_substantial_article_text(text) or not image_urls)
+    if should_analyze_text:
         results.extend(checker.fact_check_text_claims(text))
         text_analysis_error = checker.last_text_error
 
