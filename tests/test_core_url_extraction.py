@@ -158,6 +158,12 @@ class UrlExtractionTests(unittest.TestCase):
 
         self.assertAlmostEqual(core._retry_after_seconds(response), 0.258066462)
 
+    def test_gemini_payload_uses_lite_fallback_model(self):
+        models = core._models_for_payload({"model": core.GEMINI_PRIMARY_MODEL})
+
+        self.assertEqual(models[0], core.GEMINI_PRIMARY_MODEL)
+        self.assertIn("gemini-2.5-flash-lite", models)
+
     @patch("api.core._download_image_as_data_url", return_value=None)
     @patch("api.core.FactChecker")
     def test_image_queue_returns_per_image_failure(self, fact_checker_class, _download):
