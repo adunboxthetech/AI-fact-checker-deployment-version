@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
@@ -48,13 +49,25 @@ BOILERPLATE_MARKERS = [
     "you are being redirected",
     "access denied",
     "verify you are a human",
+    "target url returned error",
+    "markdown content:",
+    "you've been blocked by network security",
+    "you have been blocked by network security",
+    "http error 403",
+    "403: forbidden",
+    "403 forbidden",
 ]
 
 MAX_TEXT_CHARS = 12000
 MAX_CLAIMS = 6
 MAX_IMAGE_CLAIMS = 4
-MAX_IMAGES_TO_ANALYZE = 1
+MAX_IMAGES_TO_ANALYZE = 4
+MAX_CONCURRENT_IMAGE_REQUESTS = 2
 MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
+GEMINI_RETRY_ATTEMPTS = 3
+GEMINI_INITIAL_RETRY_DELAY_SECONDS = 2.0
+GEMINI_BACKOFF_MULTIPLIER = 2.0
+GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 @dataclass
@@ -106,6 +119,10 @@ def _extract_error_message(response: Optional[GeminiResponse]) -> str:
     if response.body:
         return response.body[:200]
     return f"upstream status {response.status_code}"
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    return GEMINI_INITIAL_RETRY_DELAY_SECONDS * (GEMINI_BACKOFF_MULTIPLIER ** attempt)
 
 
 def normalize_url(url: str) -> str:
@@ -369,8 +386,9 @@ def _fetch_jina_text(url: str) -> Optional[str]:
         query = f"?{parsed.query}" if parsed.query else ""
         wrapped = f"https://r.jina.ai/{parsed.scheme}://{parsed.netloc}{parsed.path}{query}"
         resp = requests.get(wrapped, headers=DEFAULT_HEADERS, timeout=14)
-        if resp.status_code == 200 and len(resp.text.strip()) > 200:
-            return _clean_text(resp.text)
+        text = _clean_text(resp.text)
+        if resp.status_code == 200 and len(text) > 200 and not _looks_blocked(text):
+            return text
     except Exception:
         return None
     return None
@@ -821,7 +839,7 @@ class FactChecker:
         }
         self.last_image_error = ""
 
-    def _post_gemini(self, payload: Dict[str, Any], retries: int = 3) -> Optional[GeminiResponse]:
+    def _post_gemini(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS) -> Optional[GeminiResponse]:
         """Retry transient upstream errors (especially rate limits)."""
         last_response: Optional[GeminiResponse] = None
         last_error: Optional[str] = None
@@ -853,10 +871,10 @@ class FactChecker:
                 last_response = response
                 if response.status_code == 200:
                     return response
-                if response.status_code not in {429, 500, 502, 503, 504}:
+                if response.status_code not in GEMINI_TRANSIENT_STATUS_CODES:
                     return response
             if attempt < retries - 1:
-                time.sleep(1.2 * (attempt + 1))
+                time.sleep(_retry_delay_seconds(attempt))
         if last_response is None and last_error:
             return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
@@ -1095,6 +1113,62 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
     return response, 200
 
 
+def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
+    try:
+        checker = FactChecker(api_key=api_key)
+        image_data_url = _download_image_as_data_url(image_url)
+        claims = checker.extract_image_claims(
+            image_url=None if image_data_url else image_url,
+            image_data_url=image_data_url,
+        )
+        if checker.last_image_error:
+            return {
+                "image_url": image_url,
+                "status": "failed",
+                "reason": checker.last_image_error,
+                "claims": [],
+            }
+        return {
+            "image_url": image_url,
+            "status": "ok",
+            "claims": claims,
+        }
+    except Exception as exc:
+        return {
+            "image_url": image_url,
+            "status": "failed",
+            "reason": f"{type(exc).__name__}: {exc}",
+            "claims": [],
+        }
+
+
+def _analyze_image_urls_with_queue(checker: FactChecker, image_urls: List[str]) -> List[Dict[str, Any]]:
+    candidates = [url for url in image_urls[:MAX_IMAGES_TO_ANALYZE] if url]
+    if not candidates:
+        return []
+
+    results: List[Optional[Dict[str, Any]]] = [None] * len(candidates)
+    worker_count = min(MAX_CONCURRENT_IMAGE_REQUESTS, len(candidates))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(_analyze_single_image_url, checker.api_key, image_url): index
+            for index, image_url in enumerate(candidates)
+        }
+        for future in as_completed(futures):
+            index = futures[future]
+            try:
+                results[index] = future.result()
+            except Exception as exc:
+                results[index] = {
+                    "image_url": candidates[index],
+                    "status": "failed",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "claims": [],
+                }
+
+    return [result for result in results if result is not None]
+
+
 def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
@@ -1120,17 +1194,11 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
             if claim.strip():
                 results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
 
+    image_analysis_results: List[Dict[str, Any]] = []
     if image_urls:
-        image_analysis_errors: List[str] = []
-        for img_url in image_urls[:MAX_IMAGES_TO_ANALYZE]:
-            image_data_url = _download_image_as_data_url(img_url)
-            image_claims = checker.extract_image_claims(
-                image_url=None if image_data_url else img_url,
-                image_data_url=image_data_url,
-            )
-            if checker.last_image_error:
-                image_analysis_errors.append(checker.last_image_error)
-            for claim in image_claims:
+        image_analysis_results = _analyze_image_urls_with_queue(checker, image_urls)
+        for image_result in image_analysis_results:
+            for claim in image_result.get("claims", []):
                 if claim.strip():
                     results.append({"claim": f"[Image] {claim}", "result": checker.fact_check_claim(claim)})
 
@@ -1143,6 +1211,7 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
         "source_title": title,
         "images_detected": len(image_urls),
         "debug_image_urls": image_urls[:10],
+        "image_analysis_results": image_analysis_results,
         "image_detection_info": image_detection_info,
     }
 
@@ -1151,6 +1220,11 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     if image_urls:
         response["selected_image_url"] = image_urls[0]
+        image_analysis_errors = [
+            item.get("reason", "")
+            for item in image_analysis_results
+            if item.get("status") == "failed" and item.get("reason")
+        ]
         if not any(item.get("claim", "").startswith("[Image]") for item in results) and image_analysis_errors:
             response["image_analysis_error"] = image_analysis_errors[0]
 
