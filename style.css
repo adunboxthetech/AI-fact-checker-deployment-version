@@ -603,3 +603,10 @@ h1, h2, h3, h4, h5, .app-title {
   .welcome-section h2 { font-size: 2rem; }
   .claim-result { padding: 16px; }
 }
+
+/* Force interactive elements to be above everything and clickable */
+button, .icon-btn, .submit-btn, .icon-action-btn, .dropzone, .prompt-input, #themeToggle {
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 100 !important;
+}
