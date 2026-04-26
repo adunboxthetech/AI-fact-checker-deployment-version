@@ -10,7 +10,7 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
   <link href="style.css" rel="stylesheet" />
 
@@ -20,7 +20,8 @@
       try {
         const stored = localStorage.getItem('ai-fc-theme');
         const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        const theme = stored || (prefersDark ? 'dark' : 'light');
+        // Default to dark mode for better aesthetic
+        const theme = stored || (prefersDark ? 'dark' : 'dark');
         document.documentElement.setAttribute('data-theme', theme);
       } catch (_) {}
     })();
@@ -32,78 +33,84 @@
   </style>
 </head>
 <body>
-  <div class="container">
+  <!-- Ambient bottom gradient -->
+  <div class="ambient-gradient" id="ambientGradient"></div>
+
+  <div class="app-wrapper">
     <header class="header">
-      <div class="header-grid">
-        <span class="brand-badge">
-          <img src="assets/AD_logo.png" alt="Logo" class="brand-logo" loading="eager"
-               onerror="this.onerror=null; this.src='assets/logo.png';" />
-        </span>
+      <div class="header-content">
+        <div class="brand">
+          <div class="brand-badge">
+            <img src="assets/AD_logo.png" alt="Logo" class="brand-logo" loading="eager" onerror="this.onerror=null; this.src='assets/logo.png';" />
+          </div>
+          <h1 class="app-title">AI Fact Checker</h1>
+        </div>
 
-        <h1 class="app-title">AI Fact Checker</h1>
-
-        <button id="themeToggle" class="icon-btn" aria-label="Toggle theme" title="Toggle light/dark">
+        <button id="themeToggle" class="icon-btn glass-btn" aria-label="Toggle theme" title="Toggle light/dark">
           <i class="fas fa-moon"></i>
         </button>
-
-        <div class="header-subtitles">
-          <p class="subtitle">Fact-check by pasting text or a link below.</p>
-          <p class="subtitle-hint">For image-based posts, please upload a screenshot.</p>
-        </div>
       </div>
     </header>
 
-    <main class="main-content neumorphic">
-      <div class="input-section">
-        <textarea
-          id="textInput"
-          class="neumorphic-input"
-          placeholder="Paste text or a URL (https://...) to fact-check its claims..."
-          rows="6"
-        ></textarea>
-
-        <div class="hint">
-          <span><i class="fas fa-keyboard"></i> Press Ctrl + Enter to fact-check</span>
+    <main class="main-scrollable">
+      <div class="content-container">
+        
+        <div id="welcomeSection" class="welcome-section">
+          <h2>Seek the Truth.</h2>
+          <p>Fact-check claims, articles, or images with unparalleled accuracy.</p>
         </div>
 
+        <div id="loadingSection" class="loading-section hidden">
+          <div class="orb-spinner"></div>
+          <p class="loading-text">Analyzing claims across global sources...</p>
+        </div>
+
+        <div id="resultsSection" class="results-section hidden">
+          <div class="results-header">
+            <h2>Analysis Complete</h2>
+          </div>
+          <div id="resultsContainer"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="bottom-area">
+      <div class="prompt-container glass-panel">
+        
         <div class="upload-section">
           <div id="imageDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload image">
             <input id="imageInput" type="file" accept="image/*" hidden />
-            <div class="dz-content">
-              <i class="fas fa-image"></i>
-              <div>
-                <div class="dz-title">Upload an image</div>
-                <div class="dz-subtitle">Drop an image here, click to browse, or paste a URL above</div>
-              </div>
-            </div>
+            <i class="fas fa-paperclip"></i>
           </div>
           <div id="imagePreview" class="image-preview hidden"></div>
         </div>
 
-        <div class="button-group">
-          <button id="factCheckBtn" class="primary-btn neu-btn">
-            <i class="fas fa-magnifying-glass"></i>
-            <span class="btn-label">Fact Check Now</span>
-          </button>
-          <button id="clearBtn" class="secondary-btn neu-btn">
+        <div class="textarea-wrapper">
+          <textarea
+            id="textInput"
+            class="prompt-input"
+            placeholder="Ask a question, paste a link or drop an image..."
+            rows="1"
+          ></textarea>
+        </div>
+
+        <div class="action-buttons">
+          <button id="clearBtn" class="icon-action-btn" title="Clear input">
             <i class="fas fa-eraser"></i>
-            Clear
+          </button>
+          <button id="factCheckBtn" class="submit-btn" title="Fact Check Now">
+            <i class="fas fa-arrow-up"></i>
+            <span class="btn-label hidden-label">Fact Check Now</span>
           </button>
         </div>
-      </div>
 
-      <div id="loadingSection" class="loading-section hidden">
-        <div class="spinner"></div>
-        <p>Analyzing claims and verifying with trusted sources...</p>
       </div>
-
-      <div id="resultsSection" class="results-section hidden">
-        <h2>Fact-Check Results</h2>
-        <div id="resultsContainer"></div>
+      <div class="hint">
+        <span>Powered by Advanced AI Models</span>
       </div>
-    </main>
+    </footer>
   </div>
 
-  <script src="script.js?v=2"></script>
+  <script src="script.js?v=3"></script>
 </body>
 </html>

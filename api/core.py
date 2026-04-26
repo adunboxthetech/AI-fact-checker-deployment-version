@@ -774,9 +774,8 @@ class FactChecker:
         ).format(max_claims=max_claims, text=clipped)
 
         payload = {
-            "model": "gemini-2.0-flash",
+            "model": "gemini-3-flash-preview",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 350,
         }
         response = self._post_gemini(payload)
         if response is None or response.status_code != 200:
@@ -813,9 +812,9 @@ class FactChecker:
         ).format(claim=claim)
 
         payload = {
-            "model": "gemini-2.0-flash",
+            "model": "gemini-3-flash-preview",
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
+            "response_format": {"type": "json_object"},
         }
         response = self._post_gemini(payload)
 
@@ -858,9 +857,18 @@ class FactChecker:
                 urls = re.findall(r"https?://[^\s)\]}]+", parsed["explanation"], flags=re.I)
             if urls:
                 parsed["sources"] = urls[:5]
+            conf_val = parsed.get("confidence", 75)
+            if isinstance(conf_val, str):
+                conf_val = re.sub(r"[^\d]", "", conf_val)
+                conf_val = int(conf_val) if conf_val else 75
+            else:
+                try:
+                    conf_val = int(conf_val)
+                except Exception:
+                    conf_val = 75
             return {
                 "verdict": parsed.get("verdict", "INSUFFICIENT EVIDENCE"),
-                "confidence": int(parsed.get("confidence", 75)),
+                "confidence": conf_val,
                 "explanation": parsed.get("explanation", "Analysis completed"),
                 "sources": parsed.get("sources", []),
             }
@@ -896,9 +904,8 @@ class FactChecker:
             messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
 
         payload = {
-            "model": "gemini-2.0-flash",
+            "model": "gemini-3-flash-preview",
             "messages": messages,
-            "max_tokens": 500,
         }
         response = self._post_gemini(payload)
         if response is None or response.status_code != 200:
