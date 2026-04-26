@@ -1256,10 +1256,28 @@ class FactChecker:
         if isinstance(parsed, list):
             claim_items = parsed
         elif isinstance(parsed, dict):
-            claim_items = parsed.get("claims", [])
+            if isinstance(parsed.get("claims"), list):
+                claim_items = parsed["claims"]
+            elif isinstance(parsed.get("claims"), dict):
+                claim_items = [parsed["claims"]]
+            elif parsed.get("claim") or parsed.get("verdict") or parsed.get("explanation"):
+                claim_items = [parsed]
+            else:
+                claim_items = []
         else:
-            self.last_text_error = "Upstream returned text analysis in an unexpected format"
-            return []
+            fallback_text = _clean_text(content)
+            if not fallback_text or fallback_text.lower() in {"none", "no claims", "no factual claims"}:
+                return []
+            urls = re.findall(r"https?://[^\s)\]}]+", content, flags=re.I)
+            return [{
+                "claim": "Text claim analysis",
+                "result": {
+                    "verdict": "ANALYSIS COMPLETE",
+                    "confidence": 60,
+                    "explanation": fallback_text,
+                    "sources": urls[:5],
+                },
+            }]
         if not isinstance(claim_items, list):
             return []
 
@@ -1269,31 +1287,18 @@ class FactChecker:
                 continue
             claim = _clean_text(str(item.get("claim", "")))
             if not claim:
+                claim = _clean_text(str(item.get("statement", "") or item.get("text", "")))
+            if not claim and item.get("explanation"):
+                claim = "Text claim analysis"
+            if not claim:
                 continue
-            sources = []
-            raw_sources = item.get("sources", [])
-            if isinstance(raw_sources, list):
-                sources = [
-                    source.strip()
-                    for source in raw_sources
-                    if isinstance(source, str) and re.match(r"^https?://", source.strip(), flags=re.I)
-                ][:5]
-            confidence = item.get("confidence", 75)
-            if isinstance(confidence, str):
-                confidence = re.sub(r"[^\d]", "", confidence)
-                confidence = int(confidence) if confidence else 75
-            else:
-                try:
-                    confidence = int(confidence)
-                except Exception:
-                    confidence = 75
             results.append({
                 "claim": claim,
                 "result": {
                     "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
-                    "confidence": max(0, min(100, confidence)),
+                    "confidence": _coerce_confidence(item.get("confidence", 75)),
                     "explanation": item.get("explanation", "Analysis completed"),
-                    "sources": sources,
+                    "sources": _clean_sources(item.get("sources", [])),
                 },
             })
         return results

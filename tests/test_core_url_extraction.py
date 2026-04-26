@@ -215,6 +215,50 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(results[0]["claim"], "[Image] Visual claim analysis")
         self.assertEqual(results[0]["result"]["verdict"], "ANALYSIS COMPLETE")
 
+    @patch.object(core.FactChecker, "_post_gemini")
+    def test_fact_check_text_claims_accepts_single_object_response(self, post_gemini):
+        checker = core.FactChecker(api_key="test-key")
+        post_gemini.return_value = core.GeminiResponse(
+            status_code=200,
+            body=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "claim": "OpenAI released ChatGPT.",
+                            "verdict": "TRUE",
+                            "confidence": "98%",
+                            "explanation": "OpenAI announced ChatGPT publicly.",
+                            "sources": ["https://openai.com/blog/chatgpt"],
+                        })
+                    }
+                }]
+            }),
+        )
+
+        results = checker.fact_check_text_claims("OpenAI released ChatGPT.")
+
+        self.assertEqual(results[0]["claim"], "OpenAI released ChatGPT.")
+        self.assertEqual(results[0]["result"]["confidence"], 98)
+
+    @patch.object(core.FactChecker, "_post_gemini")
+    def test_fact_check_text_claims_falls_back_to_raw_analysis(self, post_gemini):
+        checker = core.FactChecker(api_key="test-key")
+        post_gemini.return_value = core.GeminiResponse(
+            status_code=200,
+            body=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": "This post contains a general announcement and no specific verifiable claim."
+                    }
+                }]
+            }),
+        )
+
+        results = checker.fact_check_text_claims("A social post.")
+
+        self.assertEqual(results[0]["claim"], "Text claim analysis")
+        self.assertEqual(results[0]["result"]["verdict"], "ANALYSIS COMPLETE")
+
     @patch("api.core._download_image_as_data_url", return_value=None)
     @patch("api.core.FactChecker")
     def test_image_queue_returns_per_image_failure(self, fact_checker_class, _download):
