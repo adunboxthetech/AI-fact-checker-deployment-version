@@ -891,7 +891,10 @@ class FactChecker:
                     {
                         "type": "text",
                         "text": (
-                            "Analyze this image. Extract all factual claims that a third-party could verify. "
+                            "Analyze this image. Focus ONLY on the substantive text content, news headlines, or articles. "
+                            "Extract the main factual claims from that content that a third-party could verify. "
+                            "CRITICAL: Ignore all UI elements, metadata, timestamps, usernames, profile pictures, and engagement metrics (likes/retweets). "
+                            "Do NOT extract claims about who posted what or when. "
                             "Return ONLY the claims as a numbered list. If none, respond with 'NONE'."
                         ),
                     }
