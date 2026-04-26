@@ -102,7 +102,14 @@ def _try_parse_json_block(s: Optional[str]) -> Optional[Any]:
         try:
             return json.loads(s[start:end + 1])
         except Exception:
-            return None
+            pass
+    start = s.find("[")
+    end = s.rfind("]")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(s[start:end + 1])
+        except Exception:
+            pass
     return None
 
 
@@ -123,6 +130,30 @@ def _extract_error_message(response: Optional[GeminiResponse]) -> str:
     if response.body:
         return response.body[:200]
     return f"upstream status {response.status_code}"
+
+
+def _coerce_confidence(value: Any, default: int = 75) -> int:
+    if isinstance(value, str):
+        value = re.sub(r"[^\d]", "", value)
+        value = int(value) if value else default
+    else:
+        try:
+            value = int(value)
+        except Exception:
+            value = default
+    return max(0, min(100, value))
+
+
+def _clean_sources(value: Any) -> List[str]:
+    if isinstance(value, str):
+        value = re.findall(r"https?://[^\s)\]}]+", value, flags=re.I)
+    if not isinstance(value, list):
+        return []
+    return [
+        source.strip()
+        for source in value
+        if isinstance(source, str) and re.match(r"^https?://", source.strip(), flags=re.I)
+    ][:5]
 
 
 def _retry_delay_seconds(attempt: int) -> float:
@@ -1375,10 +1406,28 @@ class FactChecker:
         if isinstance(parsed, list):
             claim_items = parsed
         elif isinstance(parsed, dict):
-            claim_items = parsed.get("claims", [])
+            if isinstance(parsed.get("claims"), list):
+                claim_items = parsed["claims"]
+            elif isinstance(parsed.get("claims"), dict):
+                claim_items = [parsed["claims"]]
+            elif parsed.get("claim") or parsed.get("verdict") or parsed.get("explanation"):
+                claim_items = [parsed]
+            else:
+                claim_items = []
         else:
-            self.last_image_error = "Upstream returned image analysis in an unexpected format"
-            return []
+            fallback_text = _clean_text(content)
+            if not fallback_text or fallback_text.lower() in {"none", "no claims", "no factual claims"}:
+                return []
+            urls = re.findall(r"https?://[^\s)\]}]+", content, flags=re.I)
+            return [{
+                "claim": "[Image] Visual claim analysis",
+                "result": {
+                    "verdict": "ANALYSIS COMPLETE",
+                    "confidence": 60,
+                    "explanation": fallback_text,
+                    "sources": urls[:5],
+                },
+            }]
         if not isinstance(claim_items, list):
             return []
 
@@ -1388,31 +1437,18 @@ class FactChecker:
                 continue
             claim = _clean_text(str(item.get("claim", "")))
             if not claim:
+                claim = _clean_text(str(item.get("statement", "") or item.get("text", "")))
+            if not claim and item.get("explanation"):
+                claim = "Visual claim analysis"
+            if not claim:
                 continue
-            sources = []
-            raw_sources = item.get("sources", [])
-            if isinstance(raw_sources, list):
-                sources = [
-                    source.strip()
-                    for source in raw_sources
-                    if isinstance(source, str) and re.match(r"^https?://", source.strip(), flags=re.I)
-                ][:5]
-            confidence = item.get("confidence", 75)
-            if isinstance(confidence, str):
-                confidence = re.sub(r"[^\d]", "", confidence)
-                confidence = int(confidence) if confidence else 75
-            else:
-                try:
-                    confidence = int(confidence)
-                except Exception:
-                    confidence = 75
             results.append({
                 "claim": f"[Image] {claim}",
                 "result": {
                     "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
-                    "confidence": max(0, min(100, confidence)),
+                    "confidence": _coerce_confidence(item.get("confidence", 75)),
                     "explanation": item.get("explanation", "Visual analysis completed"),
-                    "sources": sources,
+                    "sources": _clean_sources(item.get("sources", [])),
                 },
             })
         return results

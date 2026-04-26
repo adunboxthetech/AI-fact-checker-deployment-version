@@ -164,6 +164,57 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(models[0], core.GEMINI_PRIMARY_MODEL)
         self.assertIn("gemini-2.5-flash-lite", models)
 
+    def test_parse_json_block_handles_fenced_array(self):
+        parsed = core._try_parse_json_block(
+            '```json\n[{"claim":"Chegg declined","verdict":"TRUE"}]\n```'
+        )
+
+        self.assertEqual(parsed[0]["claim"], "Chegg declined")
+
+    @patch.object(core.FactChecker, "_post_gemini")
+    def test_fact_check_image_content_accepts_single_object_response(self, post_gemini):
+        checker = core.FactChecker(api_key="test-key")
+        post_gemini.return_value = core.GeminiResponse(
+            status_code=200,
+            body=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "claim": "Chegg stock declined sharply.",
+                            "verdict": "TRUE",
+                            "confidence": "91%",
+                            "explanation": "The chart shows a steep decline.",
+                            "sources": ["https://example.test/source"],
+                        })
+                    }
+                }]
+            }),
+        )
+
+        results = checker.fact_check_image_content(image_url="https://i.redd.it/example.jpeg", image_data_url=None)
+
+        self.assertEqual(results[0]["claim"], "[Image] Chegg stock declined sharply.")
+        self.assertEqual(results[0]["result"]["confidence"], 91)
+
+    @patch.object(core.FactChecker, "_post_gemini")
+    def test_fact_check_image_content_falls_back_to_raw_analysis(self, post_gemini):
+        checker = core.FactChecker(api_key="test-key")
+        post_gemini.return_value = core.GeminiResponse(
+            status_code=200,
+            body=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": "The visible chart indicates Chegg shares fell substantially."
+                    }
+                }]
+            }),
+        )
+
+        results = checker.fact_check_image_content(image_url="https://i.redd.it/example.jpeg", image_data_url=None)
+
+        self.assertEqual(results[0]["claim"], "[Image] Visual claim analysis")
+        self.assertEqual(results[0]["result"]["verdict"], "ANALYSIS COMPLETE")
+
     @patch("api.core._download_image_as_data_url", return_value=None)
     @patch("api.core.FactChecker")
     def test_image_queue_returns_per_image_failure(self, fact_checker_class, _download):
