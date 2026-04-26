@@ -16,8 +16,8 @@ from readability import Document
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-GEMINI_PRIMARY_MODEL = "gemini-3-flash-preview"
-GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite"]
+GEMINI_PRIMARY_MODEL = "gemini-2.0-flash"
+GEMINI_FALLBACK_MODELS = ["gemini-1.5-flash"]
 
 DEFAULT_HEADERS = {
     "User-Agent": (
