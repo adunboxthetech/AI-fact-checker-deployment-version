@@ -58,6 +58,14 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(core._retry_delay_seconds(1), 4.0)
         self.assertEqual(core._retry_delay_seconds(2), 8.0)
 
+    def test_retry_after_parses_gemini_retry_delay(self):
+        response = core.GeminiResponse(
+            status_code=429,
+            body='[{"error":{"details":[{"retryDelay":"29.5s"}]}}]',
+        )
+
+        self.assertEqual(core._retry_after_seconds(response), 29.5)
+
     @patch("api.core._download_image_as_data_url", return_value=None)
     @patch("api.core.FactChecker")
     def test_image_queue_returns_per_image_failure(self, fact_checker_class, _download):
@@ -84,6 +92,45 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(results[0]["claims"], ["Image claim"])
         self.assertEqual(results[1]["status"], "failed")
         self.assertEqual(results[1]["reason"], "Rate limit exceeded after retries")
+
+    @patch("api.core._analyze_image_urls_with_queue")
+    @patch("api.core.extract_content_from_url")
+    @patch("api.core._get_checker")
+    def test_url_fact_check_skips_images_when_article_text_is_available(
+        self,
+        get_checker,
+        extract_content,
+        analyze_images,
+    ):
+        class FakeChecker:
+            api_key = "test-key"
+            last_text_error = ""
+
+            def fact_check_text_claims(self, text):
+                return [{
+                    "claim": "The administration dismissed the National Science Board.",
+                    "result": {
+                        "verdict": "TRUE",
+                        "confidence": 90,
+                        "explanation": "Verified.",
+                        "sources": ["https://example.test/source"],
+                    },
+                }]
+
+        get_checker.return_value = (FakeChecker(), None)
+        extract_content.return_value = {
+            "text": "The administration dismissed the National Science Board. " * 20,
+            "title": "Trump fires the entire National Science Board",
+            "image_urls": ["https://example.test/image.jpg"],
+            "image_detection_info": {"has_images": True, "image_detected": True, "message": ""},
+        }
+
+        response, status = core.fact_check_url_input("https://example.test/article")
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response["claims_found"], 1)
+        self.assertIn("image_analysis_skipped_reason", response)
+        analyze_images.assert_not_called()
 
 
 if __name__ == "__main__":

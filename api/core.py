@@ -4,7 +4,7 @@ import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -16,6 +16,8 @@ from readability import Document
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_PRIMARY_MODEL = "gemini-3-flash-preview"
+GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"]
 
 DEFAULT_HEADERS = {
     "User-Agent": (
@@ -74,6 +76,7 @@ GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 class GeminiResponse:
     status_code: int
     body: str
+    headers: Dict[str, str] = field(default_factory=dict)
 
     def json(self) -> Dict[str, Any]:
         return json.loads(self.body or "{}")
@@ -123,6 +126,43 @@ def _extract_error_message(response: Optional[GeminiResponse]) -> str:
 
 def _retry_delay_seconds(attempt: int) -> float:
     return GEMINI_INITIAL_RETRY_DELAY_SECONDS * (GEMINI_BACKOFF_MULTIPLIER ** attempt)
+
+
+def _retry_after_seconds(response: Optional[GeminiResponse]) -> Optional[float]:
+    if response is None:
+        return None
+    header_value = response.headers.get("Retry-After") or response.headers.get("retry-after")
+    if header_value:
+        try:
+            return max(0.0, float(header_value))
+        except ValueError:
+            pass
+
+    parsed = _try_parse_json_block(response.body)
+    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+        parsed = parsed[0]
+    if isinstance(parsed, dict):
+        details = parsed.get("error", {}).get("details", [])
+        if isinstance(details, list):
+            for detail in details:
+                retry_delay = detail.get("retryDelay") if isinstance(detail, dict) else None
+                if isinstance(retry_delay, str):
+                    match = re.search(r"([\d.]+)s", retry_delay)
+                    if match:
+                        return max(0.0, float(match.group(1)))
+
+    match = re.search(r"retry in\s+([\d.]+)s", response.body or "", flags=re.I)
+    if match:
+        return max(0.0, float(match.group(1)))
+    return None
+
+
+def _models_for_payload(payload: Dict[str, Any]) -> List[str]:
+    requested_model = payload.get("model") or GEMINI_PRIMARY_MODEL
+    models = [requested_model]
+    if requested_model == GEMINI_PRIMARY_MODEL:
+        models.extend(GEMINI_FALLBACK_MODELS)
+    return _dedupe(models)
 
 
 def normalize_url(url: str) -> str:
@@ -427,6 +467,10 @@ def _has_claim_signal(text: str) -> bool:
     if re.search(r"\b\d{1,4}([.,]\d+)?%?\b", t):
         return True
     return False
+
+
+def _has_substantial_article_text(text: str) -> bool:
+    return len(_clean_text(text)) >= 400
 
 
 def _extract_images_from_html(soup: BeautifulSoup, base_url: str) -> List[str]:
@@ -838,43 +882,51 @@ class FactChecker:
             "Accept": "application/json",
         }
         self.last_image_error = ""
+        self.last_text_error = ""
 
     def _post_gemini(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS) -> Optional[GeminiResponse]:
         """Retry transient upstream errors (especially rate limits)."""
         last_response: Optional[GeminiResponse] = None
         last_error: Optional[str] = None
-        encoded_payload = json.dumps(payload).encode("utf-8")
-        for attempt in range(retries):
-            try:
-                req = urllib_request.Request(
-                    GEMINI_URL,
-                    data=encoded_payload,
-                    headers=self.headers,
-                    method="POST",
-                )
-                with urllib_request.urlopen(req, timeout=30) as upstream:
-                    body = upstream.read().decode("utf-8", errors="replace")
-                    status_code = int(getattr(upstream, "status", 200))
-                    response = GeminiResponse(status_code=status_code, body=body)
-            except urllib_error.HTTPError as err:
-                body = ""
+        models = _models_for_payload(payload)
+        for model_index, model in enumerate(models):
+            model_payload = {**payload, "model": model}
+            encoded_payload = json.dumps(model_payload).encode("utf-8")
+            for attempt in range(retries):
                 try:
-                    body = err.read().decode("utf-8", errors="replace")
-                except Exception:
+                    req = urllib_request.Request(
+                        GEMINI_URL,
+                        data=encoded_payload,
+                        headers=self.headers,
+                        method="POST",
+                    )
+                    with urllib_request.urlopen(req, timeout=30) as upstream:
+                        body = upstream.read().decode("utf-8", errors="replace")
+                        status_code = int(getattr(upstream, "status", 200))
+                        response = GeminiResponse(status_code=status_code, body=body, headers=dict(upstream.headers))
+                except urllib_error.HTTPError as err:
                     body = ""
-                response = GeminiResponse(status_code=int(err.code), body=body)
-            except Exception as err:
-                last_error = f"{type(err).__name__}: {err}"
-                response = None
+                    try:
+                        body = err.read().decode("utf-8", errors="replace")
+                    except Exception:
+                        body = ""
+                    response = GeminiResponse(status_code=int(err.code), body=body, headers=dict(err.headers or {}))
+                except Exception as err:
+                    last_error = f"{type(err).__name__}: {err}"
+                    response = None
 
-            if response is not None:
-                last_response = response
-                if response.status_code == 200:
-                    return response
-                if response.status_code not in GEMINI_TRANSIENT_STATUS_CODES:
-                    return response
-            if attempt < retries - 1:
-                time.sleep(_retry_delay_seconds(attempt))
+                if response is not None:
+                    last_response = response
+                    if response.status_code == 200:
+                        return response
+                    if response.status_code not in GEMINI_TRANSIENT_STATUS_CODES:
+                        return response
+                    if response.status_code == 429 and model_index < len(models) - 1:
+                        break
+                if attempt < retries - 1:
+                    retry_after = _retry_after_seconds(last_response)
+                    delay = retry_after if retry_after is not None else _retry_delay_seconds(attempt)
+                    time.sleep(delay)
         if last_response is None and last_error:
             return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
@@ -892,7 +944,7 @@ class FactChecker:
         ).format(max_claims=max_claims, text=clipped)
 
         payload = {
-            "model": "gemini-3-flash-preview",
+            "model": GEMINI_PRIMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
         }
         response = self._post_gemini(payload)
@@ -930,7 +982,7 @@ class FactChecker:
         ).format(claim=claim)
 
         payload = {
-            "model": "gemini-3-flash-preview",
+            "model": GEMINI_PRIMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
         }
@@ -999,6 +1051,84 @@ class FactChecker:
             "sources": urls[:5] if urls else ["Google Gemini Analysis"],
         }
 
+    def fact_check_text_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[Dict[str, Any]]:
+        self.last_text_error = ""
+        if not text:
+            return []
+        clipped = _truncate(text, 7000)
+        prompt = (
+            f"Extract and fact-check up to {max_claims} concrete factual claims from this article text. "
+            "Use reliable sources and avoid fact-checking UI text, bylines, captions, cookie notices, or navigation. "
+            "Do not replace the article's event with an older similar event. "
+            "Return ONLY JSON with this exact shape: "
+            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE",'
+            '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
+            "Confidence must be an integer from 1 to 100. "
+            "If there are no factual claims, return {\"claims\":[]}.\n\n"
+            f"Article text: {clipped}"
+        )
+
+        payload = {
+            "model": GEMINI_PRIMARY_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+        }
+        response = self._post_gemini(payload)
+        if response is None or response.status_code != 200:
+            self.last_text_error = _extract_error_message(response)
+            return []
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except Exception:
+            self.last_text_error = "Upstream returned an unreadable text analysis response"
+            return []
+
+        parsed = _try_parse_json_block(content)
+        if isinstance(parsed, list):
+            claim_items = parsed
+        elif isinstance(parsed, dict):
+            claim_items = parsed.get("claims", [])
+        else:
+            self.last_text_error = "Upstream returned text analysis in an unexpected format"
+            return []
+        if not isinstance(claim_items, list):
+            return []
+
+        results: List[Dict[str, Any]] = []
+        for item in claim_items[:max_claims]:
+            if not isinstance(item, dict):
+                continue
+            claim = _clean_text(str(item.get("claim", "")))
+            if not claim:
+                continue
+            sources = []
+            raw_sources = item.get("sources", [])
+            if isinstance(raw_sources, list):
+                sources = [
+                    source.strip()
+                    for source in raw_sources
+                    if isinstance(source, str) and re.match(r"^https?://", source.strip(), flags=re.I)
+                ][:5]
+            confidence = item.get("confidence", 75)
+            if isinstance(confidence, str):
+                confidence = re.sub(r"[^\d]", "", confidence)
+                confidence = int(confidence) if confidence else 75
+            else:
+                try:
+                    confidence = int(confidence)
+                except Exception:
+                    confidence = 75
+            results.append({
+                "claim": claim,
+                "result": {
+                    "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
+                    "confidence": max(0, min(100, confidence)),
+                    "explanation": item.get("explanation", "Analysis completed"),
+                    "sources": sources,
+                },
+            })
+        return results
+
     def extract_image_claims(self, image_url: Optional[str], image_data_url: Optional[str], max_claims: int = MAX_IMAGE_CLAIMS) -> List[str]:
         self.last_image_error = ""
         if not image_url and not image_data_url:
@@ -1027,7 +1157,7 @@ class FactChecker:
             messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
 
         payload = {
-            "model": "gemini-3-flash-preview",
+            "model": GEMINI_PRIMARY_MODEL,
             "messages": messages,
         }
         response = self._post_gemini(payload)
@@ -1067,22 +1197,17 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     if not text:
         return {"error": "No text provided"}, 400
 
-    claims = checker.extract_claims(text)
-    if not claims and text:
-        # Fallback keeps UX predictable when claim extraction is too strict.
-        claims = [text]
+    results = checker.fact_check_text_claims(text)
 
-    results = []
-    for claim in claims:
-        if claim.strip():
-            results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
-
-    return {
+    response = {
         "original_text": text,
         "claims_found": len(results),
         "fact_check_results": results,
         "timestamp": time.time(),
-    }, 200
+    }
+    if checker.last_text_error and not results:
+        response["analysis_error"] = checker.last_text_error
+    return response, 200
 
 
 def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[str]) -> Tuple[Dict[str, Any], int]:
@@ -1185,17 +1310,20 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     image_detection_info = content.get("image_detection_info", {})
 
     results: List[Dict[str, Any]] = []
+    text_analysis_error = ""
 
     if text:
-        text_claims = checker.extract_claims(text)
-        if not text_claims and text and not image_urls:
-            text_claims = [text]
-        for claim in text_claims:
-            if claim.strip():
-                results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
+        results.extend(checker.fact_check_text_claims(text))
+        text_analysis_error = checker.last_text_error
 
     image_analysis_results: List[Dict[str, Any]] = []
-    if image_urls:
+    image_analysis_skipped_reason = ""
+    should_analyze_images = bool(image_urls) and not _has_substantial_article_text(text)
+    if image_urls and not should_analyze_images:
+        image_analysis_skipped_reason = (
+            "Visual analysis skipped because article text was available; this avoids unnecessary Gemini vision quota."
+        )
+    if should_analyze_images:
         image_analysis_results = _analyze_image_urls_with_queue(checker, image_urls)
         for image_result in image_analysis_results:
             for claim in image_result.get("claims", []):
@@ -1214,6 +1342,10 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
         "image_analysis_results": image_analysis_results,
         "image_detection_info": image_detection_info,
     }
+    if text_analysis_error and not results:
+        response["analysis_error"] = text_analysis_error
+    if image_analysis_skipped_reason:
+        response["image_analysis_skipped_reason"] = image_analysis_skipped_reason
 
     if image_detection_info.get("image_detected") and not image_urls:
         response["image_detection_message"] = image_detection_info.get("message", "")

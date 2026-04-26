@@ -298,6 +298,8 @@ class FactCheckerApp {
                 if (data.images_detected === 0 && data.image_detection_info && data.image_detection_info.image_detected) {
                     imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> Images found in this post, but they cannot be accessed directly from the URL.`;
                     imgInfo.style.color = 'var(--warning)';
+                } else if (data.image_analysis_skipped_reason) {
+                    imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. Visual analysis skipped.`;
                 } else if (data.image_analysis_error) {
                     imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. Visual analysis could not complete.`;
                     imgInfo.style.color = 'var(--warning)';
@@ -306,15 +308,15 @@ class FactCheckerApp {
                 }
                 this.resultsContainer.appendChild(imgInfo);
                 
-                const imageMessage = data.image_analysis_error || data.image_detection_message;
+                const imageMessage = data.image_analysis_error || data.image_detection_message || data.image_analysis_skipped_reason;
                 if (imageMessage) {
                     const msgDiv = document.createElement('div');
                     msgDiv.style.margin = '8px 0 12px';
                     msgDiv.style.padding = '8px 12px';
-                    msgDiv.style.backgroundColor = 'var(--warning-bg)';
-                    msgDiv.style.border = '1px solid var(--warning)';
+                    msgDiv.style.backgroundColor = data.image_analysis_skipped_reason ? 'rgba(255,255,255,0.04)' : 'var(--warning-bg)';
+                    msgDiv.style.border = data.image_analysis_skipped_reason ? '1px solid var(--border)' : '1px solid var(--warning)';
                     msgDiv.style.borderRadius = '6px';
-                    msgDiv.style.color = 'var(--warning)';
+                    msgDiv.style.color = data.image_analysis_skipped_reason ? 'var(--muted)' : 'var(--warning)';
                     msgDiv.style.fontSize = '0.9rem';
                     msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(imageMessage)}`;
                     this.resultsContainer.appendChild(msgDiv);
@@ -336,9 +338,22 @@ class FactCheckerApp {
             }
         }
 
+        if (data.analysis_error) {
+            const msgDiv = document.createElement('div');
+            msgDiv.style.margin = '8px 0 12px';
+            msgDiv.style.padding = '8px 12px';
+            msgDiv.style.backgroundColor = 'var(--warning-bg)';
+            msgDiv.style.border = '1px solid var(--warning)';
+            msgDiv.style.borderRadius = '6px';
+            msgDiv.style.color = 'var(--warning)';
+            msgDiv.style.fontSize = '0.9rem';
+            msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(data.analysis_error)}`;
+            this.resultsContainer.appendChild(msgDiv);
+        }
+
         if (!data.fact_check_results || data.fact_check_results.length === 0) {
             const empty = document.createElement('p');
-            empty.textContent = 'No factual claims found to verify.';
+            empty.textContent = data.analysis_error ? 'Analysis could not complete.' : 'No factual claims found to verify.';
             this.resultsContainer.appendChild(empty);
         } else {
             data.fact_check_results.forEach((result, index) => {
