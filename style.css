@@ -134,14 +134,12 @@ h1, h2, h3, h4, h5, .app-title {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  background: var(--text-main);
+  background: #09090b; /* Always dark so the white logo is visible */
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
 }
-
-[data-theme="dark"] .brand-badge { background: #fff; }
 
 .brand-logo {
   width: 20px;
