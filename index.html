@@ -27,14 +27,18 @@
     })();
   </script>
 
+  <!-- Three.js for WebGL Cloud -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+
   <style>
     /* Prevent theme icon FOUC */
     .icon-btn i { visibility: hidden; }
   </style>
 </head>
 <body>
-  <!-- Ambient bottom gradient -->
-  <div class="ambient-gradient" id="ambientGradient"></div>
+  <!-- Mystical Cloud UI Canvases -->
+  <canvas id="webgl-cloud" class="webgl-cloud"></canvas>
+  <canvas id="particleCanvas" class="particle-canvas"></canvas>
 
   <div class="app-wrapper">
     <header class="header">
@@ -75,7 +79,7 @@
     </main>
 
     <footer class="bottom-area">
-      <div class="prompt-container glass-panel">
+      <div class="prompt-container floating-prompt">
         
         <div class="upload-section">
           <div id="imageDrop" class="dropzone" tabindex="0" role="button" aria-label="Upload image">
