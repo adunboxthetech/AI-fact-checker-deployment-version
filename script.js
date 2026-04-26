@@ -298,13 +298,16 @@ class FactCheckerApp {
                 if (data.images_detected === 0 && data.image_detection_info && data.image_detection_info.image_detected) {
                     imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> Images found in this post, but they cannot be accessed directly from the URL.`;
                     imgInfo.style.color = 'var(--warning)';
+                } else if (data.image_analysis_error) {
+                    imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. Visual analysis could not complete.`;
+                    imgInfo.style.color = 'var(--warning)';
                 } else {
                     imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. ${data.images_detected > 0 ? 'Visual content was considered in the analysis.' : 'No images detected.'}`;
                 }
                 this.resultsContainer.appendChild(imgInfo);
                 
-                // Add image detection message if available
-                if (data.image_detection_message) {
+                const imageMessage = data.image_analysis_error || data.image_detection_message;
+                if (imageMessage) {
                     const msgDiv = document.createElement('div');
                     msgDiv.style.margin = '8px 0 12px';
                     msgDiv.style.padding = '8px 12px';
@@ -313,7 +316,7 @@ class FactCheckerApp {
                     msgDiv.style.borderRadius = '6px';
                     msgDiv.style.color = 'var(--warning)';
                     msgDiv.style.fontSize = '0.9rem';
-                    msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(data.image_detection_message)}`;
+                    msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(imageMessage)}`;
                     this.resultsContainer.appendChild(msgDiv);
                 }
             }
@@ -523,4 +526,3 @@ class FactCheckerApp {
 document.addEventListener('DOMContentLoaded', () => {
     new FactCheckerApp();
 });
-

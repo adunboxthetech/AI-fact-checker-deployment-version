@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -23,7 +24,7 @@ DEFAULT_HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Encoding": "gzip, deflate",
     "DNT": "1",
     "Connection": "keep-alive",
     "Upgrade-Insecure-Requests": "1",
@@ -53,6 +54,7 @@ MAX_TEXT_CHARS = 12000
 MAX_CLAIMS = 6
 MAX_IMAGE_CLAIMS = 4
 MAX_IMAGES_TO_ANALYZE = 1
+MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
 
 
 @dataclass
@@ -64,7 +66,7 @@ class GeminiResponse:
         return json.loads(self.body or "{}")
 
 
-def _try_parse_json_block(s: Optional[str]) -> Optional[dict]:
+def _try_parse_json_block(s: Optional[str]) -> Optional[Any]:
     if s is None:
         return None
     s = s.strip()
@@ -85,6 +87,25 @@ def _try_parse_json_block(s: Optional[str]) -> Optional[dict]:
         except Exception:
             return None
     return None
+
+
+def _extract_error_message(response: Optional[GeminiResponse]) -> str:
+    if response is None:
+        return "no response from upstream model"
+    parsed = _try_parse_json_block(response.body)
+    if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+        parsed = parsed[0]
+    if isinstance(parsed, dict):
+        error = parsed.get("error")
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+    if response.body:
+        return response.body[:200]
+    return f"upstream status {response.status_code}"
 
 
 def normalize_url(url: str) -> str:
@@ -135,10 +156,78 @@ def _is_image_like(url: str) -> bool:
         "i.imgur.com",
         "imgur.com",
         "cdninstagram.com",
+        "instagram.com",
         "fbcdn.net",
+        "fbsbx.com",
+        "twimg.com",
         "media.tumblr.com",
         "media.discordapp.net",
+        "cdn.discordapp.com",
     ])
+
+
+def _is_image_content_type(content_type: str) -> bool:
+    return (content_type or "").lower().split(";", 1)[0].strip().startswith("image/")
+
+
+def _is_html_content_type(content_type: str) -> bool:
+    media_type = (content_type or "").lower().split(";", 1)[0].strip()
+    return not media_type or media_type in {
+        "text/html",
+        "application/xhtml+xml",
+        "application/xml",
+        "text/xml",
+    }
+
+
+def _remote_url_is_image(url: str) -> bool:
+    try:
+        headers = {**DEFAULT_HEADERS, "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"}
+        resp = requests.head(url, headers=headers, allow_redirects=True, timeout=6)
+        if resp.status_code in {405, 403} or resp.status_code >= 500:
+            resp = requests.get(url, headers=headers, allow_redirects=True, timeout=6, stream=True)
+        return resp.status_code < 400 and _is_image_content_type(resp.headers.get("Content-Type", ""))
+    except Exception:
+        return False
+
+
+def _filter_image_urls(image_urls: List[str], known_image_urls: Optional[List[str]] = None) -> List[str]:
+    known = set(known_image_urls or [])
+    filtered: List[str] = []
+    for img in _dedupe([u for u in image_urls if u]):
+        if img in known or _is_image_like(img) or _remote_url_is_image(img):
+            filtered.append(img)
+        if len(filtered) >= 10:
+            break
+    return filtered
+
+
+def _download_image_as_data_url(url: str, max_bytes: int = MAX_IMAGE_DOWNLOAD_BYTES) -> Optional[str]:
+    if not url:
+        return None
+    try:
+        headers = {**DEFAULT_HEADERS, "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"}
+        resp = requests.get(url, headers=headers, timeout=15, stream=True)
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if not _is_image_content_type(content_type):
+            return None
+
+        chunks = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                return None
+            chunks.append(chunk)
+        if not chunks:
+            return None
+        encoded = base64.b64encode(b"".join(chunks)).decode("ascii")
+        return f"data:{content_type};base64,{encoded}"
+    except Exception:
+        return None
 
 
 def _detect_platform(url: str) -> str:
@@ -156,6 +245,10 @@ def _detect_platform(url: str) -> str:
     if "facebook.com" in netloc or "fb.com" in netloc:
         return "facebook"
     return "generic"
+
+
+def _has_post_adapter(platform: str) -> bool:
+    return platform in {"twitter", "reddit", "tiktok", "youtube"}
 
 
 def _extract_meta_text(soup: BeautifulSoup) -> Tuple[str, str]:
@@ -255,13 +348,18 @@ def _looks_blocked(text: str) -> bool:
     if not text:
         return True
     lowered = text.lower()
-    return len(text) < 200 or any(marker in lowered for marker in BOILERPLATE_MARKERS)
+    replacement_chars = text.count("\ufffd")
+    control_chars = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t")
+    binary_noise = replacement_chars > 5 or control_chars > max(10, len(text) * 0.03)
+    return len(text) < 200 or binary_noise or any(marker in lowered for marker in BOILERPLATE_MARKERS)
 
 
 def _fetch_html(url: str) -> Tuple[str, str, str]:
     resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=12)
     resp.raise_for_status()
     content_type = resp.headers.get("Content-Type", "")
+    if not _is_html_content_type(content_type):
+        return "", resp.url, content_type
     return resp.text, resp.url, content_type
 
 
@@ -363,9 +461,7 @@ def _build_reddit_json_url(url: str) -> str:
     path = parsed.path.rstrip("/")
     if not path.endswith(".json"):
         path += ".json"
-    q = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    q["raw_json"] = "1"
-    return urlunparse(parsed._replace(path=path, query=urlencode(q)))
+    return urlunparse(parsed._replace(path=path, query=urlencode({"raw_json": "1"})))
 
 
 def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
@@ -636,13 +732,14 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
     text_content = ""
     title = ""
     image_urls: List[str] = []
+    known_image_urls: List[str] = []
     prefer_extracted = False
 
     if extracted:
         text_content = extracted.get("text", "") or ""
         title = extracted.get("title", "") or ""
         image_urls.extend(extracted.get("images", []) or [])
-        if platform == "twitter" and (text_content or image_urls):
+        if _has_post_adapter(platform) and (text_content or image_urls):
             prefer_extracted = True
     if platform == "twitter":
         # Avoid generic HTML/Jina fallbacks for X posts to prevent unrelated content.
@@ -678,6 +775,9 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
         image_urls.extend(_extract_meta_images(soup, final_url))
         image_urls.extend(_extract_jsonld_images(jsonld_items))
         image_urls.extend(_extract_images_from_html(soup, final_url))
+    elif _is_image_content_type(content_type):
+        image_urls.append(final_url)
+        known_image_urls.append(final_url)
 
     text_content = _clean_text(text_content)
 
@@ -694,8 +794,7 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
     text_content = _truncate(text_content, MAX_TEXT_CHARS)
 
-    image_urls = _dedupe([img for img in image_urls if img])
-    image_urls = [img for img in image_urls if _is_image_like(img)]
+    image_urls = _filter_image_urls(image_urls, known_image_urls)
 
     image_detection_info = _image_detection_info(url, text_content, image_urls)
 
@@ -720,6 +819,7 @@ class FactChecker:
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        self.last_image_error = ""
 
     def _post_gemini(self, payload: Dict[str, Any], retries: int = 3) -> Optional[GeminiResponse]:
         """Retry transient upstream errors (especially rate limits)."""
@@ -882,6 +982,7 @@ class FactChecker:
         }
 
     def extract_image_claims(self, image_url: Optional[str], image_data_url: Optional[str], max_claims: int = MAX_IMAGE_CLAIMS) -> List[str]:
+        self.last_image_error = ""
         if not image_url and not image_data_url:
             return []
         messages = [
@@ -891,7 +992,8 @@ class FactChecker:
                     {
                         "type": "text",
                         "text": (
-                            "Analyze this image. Focus ONLY on the substantive text content, news headlines, or articles. "
+                            "Analyze this image. It may be a social-media post image, meme, screenshot, chart, news card, headline, or article. "
+                            "Focus ONLY on substantive text, numbers, charts, and visible claims inside the image. "
                             "Extract the main factual claims from that content that a third-party could verify. "
                             "CRITICAL: Ignore all UI elements, metadata, timestamps, usernames, profile pictures, and engagement metrics (likes/retweets). "
                             "Do NOT extract claims about who posted what or when. "
@@ -912,10 +1014,12 @@ class FactChecker:
         }
         response = self._post_gemini(payload)
         if response is None or response.status_code != 200:
+            self.last_image_error = _extract_error_message(response)
             return []
         try:
             content = response.json()["choices"][0]["message"]["content"]
         except Exception:
+            self.last_image_error = "Upstream returned an unreadable vision response"
             return []
         normalized = content.strip().lower()
         if normalized in {"none", "no claims", "no factual claims"}:
@@ -968,19 +1072,27 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
     if checker is None:
         return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
 
+    original_image = image_url or ("data_url" if image_data_url else None)
+    if not image_data_url and image_url:
+        image_data_url = _download_image_as_data_url(image_url)
+
     claims = checker.extract_image_claims(image_url=image_url, image_data_url=image_data_url)
+    image_analysis_error = checker.last_image_error
     results = []
     for claim in claims:
         if claim.strip():
             results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
 
-    return {
-        "original_image": "data_url" if image_data_url else image_url,
+    response = {
+        "original_image": original_image,
         "claims_found": len(results),
         "fact_check_results": results,
         "timestamp": time.time(),
         "source_url": image_url or None,
-    }, 200
+    }
+    if image_analysis_error and not results:
+        response["image_analysis_error"] = image_analysis_error
+    return response, 200
 
 
 def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
@@ -1002,15 +1114,22 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     if text:
         text_claims = checker.extract_claims(text)
-        if not text_claims and text:
+        if not text_claims and text and not image_urls:
             text_claims = [text]
         for claim in text_claims:
             if claim.strip():
                 results.append({"claim": claim, "result": checker.fact_check_claim(claim)})
 
     if image_urls:
+        image_analysis_errors: List[str] = []
         for img_url in image_urls[:MAX_IMAGES_TO_ANALYZE]:
-            image_claims = checker.extract_image_claims(image_url=img_url, image_data_url=None)
+            image_data_url = _download_image_as_data_url(img_url)
+            image_claims = checker.extract_image_claims(
+                image_url=None if image_data_url else img_url,
+                image_data_url=image_data_url,
+            )
+            if checker.last_image_error:
+                image_analysis_errors.append(checker.last_image_error)
             for claim in image_claims:
                 if claim.strip():
                     results.append({"claim": f"[Image] {claim}", "result": checker.fact_check_claim(claim)})
@@ -1032,5 +1151,7 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
 
     if image_urls:
         response["selected_image_url"] = image_urls[0]
+        if not any(item.get("claim", "").startswith("[Image]") for item in results) and image_analysis_errors:
+            response["image_analysis_error"] = image_analysis_errors[0]
 
     return response, 200
