@@ -441,24 +441,29 @@ class FactCheckerApp {
                 else if (firstBracket !== -1) startIdx = firstBracket;
                 
                 if (startIdx !== -1) {
-                    let lastBrace = jsonStr.lastIndexOf('}');
-                    let lastBracket = jsonStr.lastIndexOf(']');
-                    let endIdx = -1;
-                    
-                    if (lastBrace !== -1 && lastBracket !== -1) endIdx = Math.max(lastBrace, lastBracket);
-                    else if (lastBrace !== -1) endIdx = lastBrace;
-                    else if (lastBracket !== -1) endIdx = lastBracket;
-                    
-                    if (endIdx > startIdx) {
-                        let cleanJson = jsonStr.substring(startIdx, endIdx + 1);
-                        cleanJson = cleanJson.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-                        try {
-                            return processParsedJson(JSON.parse(cleanJson));
-                        } catch (innerE) {
+                    // Shrink from the right to find a valid JSON block
+                    for (let endIdx = jsonStr.length - 1; endIdx >= startIdx; endIdx--) {
+                        if (jsonStr[endIdx] === '}' || jsonStr[endIdx] === ']') {
+                            let cleanJson = jsonStr.substring(startIdx, endIdx + 1);
+                            
                             try {
-                                let fixedJson = cleanJson.replace(/,\s*([}\]])/g, '$1');
-                                return processParsedJson(JSON.parse(fixedJson));
-                            } catch (e3) {}
+                                let result = processParsedJson(JSON.parse(cleanJson));
+                                if (result) return result;
+                            } catch (innerE) {
+                                try {
+                                    let fixedJson = cleanJson.replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+                                    let result = processParsedJson(JSON.parse(fixedJson));
+                                    if (result) return result;
+                                } catch (e3) {
+                                    try {
+                                        let fixedJson = cleanJson.replace(/,\s*([}\]])/g, '$1');
+                                        let result = processParsedJson(JSON.parse(fixedJson));
+                                        if (result) return result;
+                                    } catch (e4) {
+                                        // Continue trying shorter substrings
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -497,24 +502,45 @@ class FactCheckerApp {
         const sourcesHtml = this.renderSources(extractedSources);
         
         if (typeof explanation === 'string') {
-            if (explanation.trim().startsWith('{') || explanation.trim().startsWith('[')) {
+            let trimmedExp = explanation.trim();
+            if (trimmedExp.startsWith('{') || trimmedExp.startsWith('[')) {
                 try {
-                    let jsonStr = explanation;
-                    if (explanation.startsWith('json ')) {
-                        jsonStr = explanation.substring(5);
+                    let jsonStr = trimmedExp;
+                    if (jsonStr.startsWith('json ')) {
+                        jsonStr = jsonStr.substring(5);
                     }
-                    const parsed = JSON.parse(jsonStr);
-                    if (parsed.explanation) {
-                        explanation = parsed.explanation;
-                    } else if (parsed.verdict) {
-                        explanation = `Verdict: ${parsed.verdict}`;
-                        if (parsed.confidence) {
-                            explanation += ` (Confidence: ${parsed.confidence}%)`;
+                    
+                    let parsed = null;
+                    try {
+                        parsed = JSON.parse(jsonStr);
+                    } catch (e) {
+                        // Try to find valid JSON block by shrinking from the end
+                        let startIdx = 0;
+                        for (let endIdx = jsonStr.length - 1; endIdx >= startIdx; endIdx--) {
+                            if (jsonStr[endIdx] === '}' || jsonStr[endIdx] === ']') {
+                                try {
+                                    parsed = JSON.parse(jsonStr.substring(startIdx, endIdx + 1));
+                                    break; // Successfully parsed
+                                } catch(e2) {}
+                            }
                         }
                     }
                     
-                    if (parsed.sources && Array.isArray(parsed.sources) && parsed.sources.length > 0) {
-                        extractedSources = parsed.sources;
+                    if (parsed) {
+                        if (parsed.explanation) {
+                            explanation = parsed.explanation;
+                        } else if (parsed.verdict) {
+                            explanation = `Verdict: ${parsed.verdict}`;
+                            if (parsed.confidence) {
+                                explanation += ` (Confidence: ${parsed.confidence}%)`;
+                            }
+                        }
+                        
+                        if (parsed.sources && Array.isArray(parsed.sources) && parsed.sources.length > 0) {
+                            extractedSources = parsed.sources;
+                        }
+                    } else {
+                        throw new Error("Could not parse JSON");
                     }
                 } catch (e) {
                     // Do not aggressively strip brackets and braces if JSON parse fails.
