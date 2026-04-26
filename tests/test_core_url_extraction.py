@@ -77,6 +77,27 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertIn("https://i.redd.it/example.jpeg", result["images"])
         self.assertIn("https://preview.redd.it/example.jpeg?width=720&auto=webp", result["images"])
 
+    @patch("api.core.requests.get")
+    def test_reddit_unfurled_extracts_preview_image(self, requests_get):
+        class FakeResponse:
+            status_code = 200
+
+            def json(self):
+                return {
+                    "data": {
+                        "title": "The fall of Chegg : r/IndiaTech",
+                        "description": "4.3K votes, 206 comments.",
+                        "image": {"url": "https://s.microlink.io/?url=https%3A%2F%2Fshare.redd.it%2Fpreview%2Fpost%2Fabc"},
+                    }
+                }
+
+        requests_get.return_value = FakeResponse()
+
+        result = core._extract_reddit_unfurled("https://www.reddit.com/r/test/comments/abc/example/")
+
+        self.assertEqual(result["title"], "The fall of Chegg : r/IndiaTech")
+        self.assertEqual(result["images"], ["https://s.microlink.io/?url=https%3A%2F%2Fshare.redd.it%2Fpreview%2Fpost%2Fabc"])
+
     @patch("api.core._fetch_html")
     def test_direct_image_without_extension_is_kept_by_content_type(self, fetch_html):
         fetch_html.return_value = ("", "https://cdn.example.test/media?id=123", "image/jpeg")

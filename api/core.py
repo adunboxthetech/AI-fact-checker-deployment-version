@@ -657,6 +657,34 @@ def _extract_reddit_old_html(url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _extract_reddit_unfurled(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        resp = requests.get(
+            "https://api.microlink.io/",
+            params={"url": url},
+            headers=DEFAULT_HEADERS,
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            return None
+        data = resp.json().get("data") or {}
+        title = data.get("title") or ""
+        description = data.get("description") or ""
+        images = []
+        image = data.get("image") or {}
+        if isinstance(image, dict) and image.get("url"):
+            images.append(image["url"])
+        if not title and not description and not images:
+            return None
+        return {
+            "text": _clean_text(f"{title} {description}"),
+            "title": title,
+            "images": images,
+        }
+    except Exception:
+        return None
+
+
 def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
     match = re.search(r"/status/(\d+)", url)
     if not match:
@@ -852,7 +880,7 @@ def _extract_twitter_via_proxy(url: str) -> Optional[Dict[str, Any]]:
 
 
 def _extract_reddit(url: str) -> Optional[Dict[str, Any]]:
-    return _extract_reddit_json(url) or _extract_reddit_old_html(url)
+    return _extract_reddit_json(url) or _extract_reddit_old_html(url) or _extract_reddit_unfurled(url)
 
 
 def _extract_oembed(url: str, endpoint: str) -> Optional[Dict[str, Any]]:
