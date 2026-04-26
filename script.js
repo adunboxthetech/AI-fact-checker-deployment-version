@@ -319,7 +319,8 @@ class FactCheckerApp {
                     msgDiv.style.borderRadius = '6px';
                     msgDiv.style.color = data.image_analysis_skipped_reason ? 'var(--muted)' : 'var(--warning)';
                     msgDiv.style.fontSize = '0.9rem';
-                    msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(imageMessage)}`;
+                    const friendlyImageMsg = this.getFriendlyErrorMessage(imageMessage);
+                    msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(friendlyImageMsg)}`;
                     this.resultsContainer.appendChild(msgDiv);
                 }
             }
@@ -348,7 +349,8 @@ class FactCheckerApp {
             msgDiv.style.borderRadius = '6px';
             msgDiv.style.color = 'var(--warning)';
             msgDiv.style.fontSize = '0.9rem';
-            msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(data.analysis_error)}`;
+            const friendlyMsg = this.getFriendlyErrorMessage(data.analysis_error);
+            msgDiv.innerHTML = `<i class="fas fa-info-circle"></i> ${this.escapeHtml(friendlyMsg)}`;
             this.resultsContainer.appendChild(msgDiv);
         }
 
@@ -636,12 +638,31 @@ class FactCheckerApp {
         }
     }
 
+    getFriendlyErrorMessage(message) {
+        if (!message) return "";
+        const lowerMsg = message.toLowerCase();
+        if (lowerMsg.includes('quota') || lowerMsg.includes('rate limit') || lowerMsg.includes('429') || lowerMsg.includes('too many requests')) {
+            return "The system is currently experiencing high traffic and cannot process your request right now. Please wait a few moments and try again.";
+        }
+        if (lowerMsg.includes('api key') || lowerMsg.includes('unauthorized') || lowerMsg.includes('401')) {
+            return "The system is experiencing configuration issues with the AI provider.";
+        }
+        if (lowerMsg.includes('failed to fetch') || lowerMsg.includes('network error')) {
+            return "Unable to connect to the server. Please check your internet connection and try again.";
+        }
+        if (message.length > 150) {
+            return "An unexpected error occurred while analyzing the claim. Please try again or rephrase your prompt.";
+        }
+        return message;
+    }
+
     showError(message) {
+        const friendlyMessage = this.getFriendlyErrorMessage(message);
         this.resultsContainer.innerHTML = `
             <div class="claim-result false">
                 <div class="explanation">
                     <i class="fas fa-exclamation-triangle"></i>
-                    <strong>Error:</strong> ${message}
+                    <strong>Error:</strong> ${this.escapeHtml(friendlyMessage)}
                 </div>
             </div>
         `;
