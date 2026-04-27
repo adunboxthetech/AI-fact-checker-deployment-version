@@ -58,12 +58,12 @@ class FactCheckerApp {
         // when image is loaded and textarea is hidden
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey && this.imageDataUrl) {
-                // Only trigger if we're not inside another input, or we're at body level
                 const active = document.activeElement;
-                if (active === document.body || active.closest('.prompt-container')) {
-                    e.preventDefault();
-                    this.handleFactCheck();
+                if (active && (active.classList.contains('remove') || active.id === 'clearBtn' || active.id === 'themeToggle')) {
+                    return; // Let the focused button handle its own click
                 }
+                e.preventDefault();
+                this.handleFactCheck();
             }
         });
 
@@ -113,6 +113,8 @@ class FactCheckerApp {
 
     renderImagePreview(dataUrl) {
         if (!this.imagePreview) return;
+        this.imagePreview.style.opacity = '';
+        this.imagePreview.style.transition = '';
         this.imagePreview.classList.remove('hidden');
         if (this.textInput) {
             this.textInput.style.display = 'none';
@@ -1034,9 +1036,15 @@ class MysticalEngine {
         
         this.setCloudIntensity(true); // Intensify cloud during processing
         
-        // Hide original image smoothly
-        imageElement.style.transition = 'opacity 0.5s ease';
-        imageElement.style.opacity = '0';
+        // Hide entire image preview container smoothly
+        const previewContainer = imageElement.closest('.image-preview');
+        if (previewContainer) {
+            previewContainer.style.transition = 'opacity 0.5s ease';
+            previewContainer.style.opacity = '0';
+        } else {
+            imageElement.style.transition = 'opacity 0.5s ease';
+            imageElement.style.opacity = '0';
+        }
         
         const ghost = document.createElement('img');
         ghost.src = imageElement.src;
