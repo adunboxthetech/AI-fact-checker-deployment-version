@@ -723,6 +723,7 @@ class MysticalEngine {
             uniform float iTime;
             uniform vec2 iResolution;
             uniform float intensity;
+            uniform float loadingState;
             
             // Noise functions
             vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -752,14 +753,21 @@ class MysticalEngine {
             
             void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
                 vec2 uv = fragCoord/iResolution.xy;
-                uv.x *= iResolution.x/iResolution.y;
+                vec2 centeredUv = uv - vec2(0.5, 0.5);
+                centeredUv.x *= iResolution.x/iResolution.y;
                 
-                float t = iTime * 0.2;
+                float baseTime = iTime * 0.2;
+                float rotAngle = loadingState * iTime * 0.8;
+                mat2 rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
+                
+                vec2 ruv = mix(uv, centeredUv * rot + vec2(0.5), loadingState);
+                
+                float t = baseTime + loadingState * iTime * 0.5;
                 
                 // Multilayer noise
-                float n1 = snoise(uv * 1.5 + vec2(t, t * 0.5));
-                float n2 = snoise(uv * 3.0 - vec2(t * 1.2, t * 0.8));
-                float n3 = snoise(uv * 5.0 + vec2(t * 0.5, -t));
+                float n1 = snoise(ruv * 1.5 + vec2(t, t * 0.5));
+                float n2 = snoise(ruv * 3.0 - vec2(t * 1.2, t * 0.8));
+                float n3 = snoise(ruv * 5.0 + vec2(t * 0.5, -t));
                 
                 float n = n1 * 0.5 + n2 * 0.25 + n3 * 0.125;
                 n = n * 0.5 + 0.5; // map to 0-1
@@ -772,11 +780,18 @@ class MysticalEngine {
                 vec3 finalCol = mix(col1, col2, smoothstep(0.2, 0.8, n));
                 finalCol = mix(finalCol, col3, smoothstep(0.5, 1.0, n) * (0.5 + intensity * 0.5));
                 
-                // Masking: dense at bottom, fading up
-                float mask = smoothstep(0.8, 0.0, fragCoord.y/iResolution.y);
-                mask = pow(mask, 1.5) * (n * 0.5 + 0.5);
+                // Ambient mask: dense at bottom, fading up
+                float ambientMask = smoothstep(0.8, 0.0, fragCoord.y/iResolution.y);
+                ambientMask = pow(ambientMask, 1.5) * (n * 0.5 + 0.5);
                 
-                fragColor = vec4(finalCol, mask * 0.8);
+                // Loading mask: circular in the center
+                float dist = length(centeredUv);
+                float loadingMask = smoothstep(0.35, 0.05, dist);
+                loadingMask = pow(loadingMask, 1.2) * (n * 0.7 + 0.3);
+                
+                float mask = mix(ambientMask, loadingMask, loadingState);
+                
+                fragColor = vec4(finalCol, mask * mix(0.8, 1.0, loadingState));
             }
             
             void main() {
@@ -787,7 +802,8 @@ class MysticalEngine {
         this.uniforms = {
             iTime: { value: 0 },
             iResolution: { value: new THREE.Vector2() },
-            intensity: { value: 0.2 }
+            intensity: { value: 0.2 },
+            loadingState: { value: 0.0 }
         };
         
         const geometry = new THREE.PlaneGeometry(2, 2);
@@ -961,67 +977,37 @@ class MysticalEngine {
     }
     
     // --- CLOUD LOADING ANIMATION ---
+    setLoadingState(target) {
+        if (!this.uniforms) return;
+        
+        // Stop any existing tween
+        if (this.loadingTween) {
+            cancelAnimationFrame(this.loadingTween);
+        }
+        
+        const current = this.uniforms.loadingState.value;
+        const step = (target - current) * 0.04; // Smooth transition speed
+        
+        const tween = () => {
+            this.uniforms.loadingState.value += step;
+            if (Math.abs(this.uniforms.loadingState.value - target) > 0.01) {
+                this.loadingTween = requestAnimationFrame(tween);
+            } else {
+                this.uniforms.loadingState.value = target;
+                this.loadingTween = null;
+            }
+        };
+        tween();
+    }
+
     startCloudLoading() {
-        this.cloudCanvas = document.getElementById('cloudMorphCanvas');
         this.thoughtContainer = document.getElementById('thoughtBubbles');
         this.cloudOverlay = document.getElementById('cloudLoadingOverlay');
-        if (!this.cloudCanvas || !this.thoughtContainer) return;
+        if (!this.thoughtContainer) return;
 
-        this.cloudOverlay.classList.remove('dispersing');
-        const cCtx = this.cloudCanvas.getContext('2d');
-        const W = 340, H = 280;
-        this.cloudCanvas.width = W * 2;
-        this.cloudCanvas.height = H * 2;
-        this.cloudCanvas.style.width = W + 'px';
-        this.cloudCanvas.style.height = H + 'px';
-
+        // Transition main WebGL cloud loading state
+        this.setLoadingState(1.0);
         this.cloudRunning = true;
-        let t = 0;
-        const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-
-        const drawCloud = () => {
-            if (!this.cloudRunning) return;
-            t += 0.012;
-            cCtx.clearRect(0, 0, W * 2, H * 2);
-            const cx = W, cy = H;
-            // Draw layered blobs
-            for (let layer = 3; layer >= 0; layer--) {
-                cCtx.beginPath();
-                const points = 80;
-                for (let i = 0; i <= points; i++) {
-                    const angle = (i / points) * Math.PI * 2;
-                    const baseR = (110 + layer * 20) * 2;
-                    const noise = Math.sin(angle * 3 + t * 2 + layer) * 18 +
-                                  Math.cos(angle * 5 - t * 1.5 + layer * 2) * 12 +
-                                  Math.sin(angle * 7 + t * 3) * 6;
-                    const r = baseR + noise * 2;
-                    const x = cx + Math.cos(angle) * r;
-                    const y = cy + Math.sin(angle) * r * 0.75;
-                    if (i === 0) cCtx.moveTo(x, y);
-                    else cCtx.lineTo(x, y);
-                }
-                cCtx.closePath();
-
-                const grad = cCtx.createRadialGradient(cx, cy, 0, cx, cy, (160 + layer * 20) * 2);
-                if (isDark()) {
-                    const alphas = [0.5, 0.35, 0.2, 0.1];
-                    grad.addColorStop(0, `rgba(129,140,248,${alphas[layer]})`);
-                    grad.addColorStop(0.5, `rgba(168,85,247,${alphas[layer] * 0.7})`);
-                    grad.addColorStop(1, `rgba(59,130,246,0)`);
-                } else {
-                    const alphas = [0.6, 0.4, 0.25, 0.12];
-                    grad.addColorStop(0, `rgba(99,102,241,${alphas[layer]})`);
-                    grad.addColorStop(0.5, `rgba(168,85,247,${alphas[layer] * 0.7})`);
-                    grad.addColorStop(1, `rgba(139,92,246,0)`);
-                }
-                cCtx.fillStyle = grad;
-                cCtx.filter = `blur(${6 + layer * 4}px)`;
-                cCtx.fill();
-                cCtx.filter = 'none';
-            }
-            requestAnimationFrame(drawCloud);
-        };
-        drawCloud();
 
         // Thought bubble cycling
         this.bubbleMessages = [
@@ -1079,13 +1065,13 @@ class MysticalEngine {
                 setTimeout(() => b.remove(), 400);
             });
         }
-        // Trigger disperse CSS animation
-        if (this.cloudOverlay) {
-            this.cloudOverlay.classList.add('dispersing');
-        }
+        
+        // Return main WebGL cloud to ambient state
+        this.setLoadingState(0.0);
+
         setTimeout(() => {
             if (onComplete) onComplete();
-        }, 1600);
+        }, 800);
     }
 
     triggerReveal() {
