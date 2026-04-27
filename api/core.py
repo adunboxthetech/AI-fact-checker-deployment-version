@@ -1150,6 +1150,8 @@ class FactChecker:
             native_payload = {"contents": contents}
             if generation_config:
                 native_payload["generationConfig"] = generation_config
+            if payload.get("use_web_search"):
+                native_payload["tools"] = [{"googleSearch": {}}]
             encoded_payload = json.dumps(native_payload).encode("utf-8")
             model_failed = False
             for attempt in range(retries):
@@ -1297,6 +1299,15 @@ class FactChecker:
         - OpenAI-compatible format (simpler, no translation needed)
         """
         use_vision = self._has_vision_content(payload)
+        use_web_search = payload.get("use_web_search", False)
+
+        # If web search is needed, we must use Gemini because Groq doesn't support Google Search Grounding natively here.
+        if use_web_search and self.gemini_api_key:
+            response = self._post_gemini(payload)
+            if response is not None and response.status_code == 200:
+                return response
+            # If Gemini fails, we could try Groq without search, but since search is requested, maybe just return Gemini's failure.
+            return response
 
         # Try Groq first (if key is configured)
         if self.groq_api_key:
@@ -1376,6 +1387,7 @@ class FactChecker:
             "model": GEMINI_PRIMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
+            "use_web_search": True,
         }
         response = self._post_api(payload)
 
@@ -1468,6 +1480,7 @@ class FactChecker:
             "model": GEMINI_PRIMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
+            "use_web_search": True,
         }
         response = self._post_api(payload)
         if response is None or response.status_code != 200:
@@ -1634,6 +1647,7 @@ class FactChecker:
             "model": GEMINI_PRIMARY_MODEL,
             "messages": messages,
             "response_format": {"type": "json_object"},
+            "use_web_search": True,
         }
         response = self._post_api(payload)
         if response is None or response.status_code != 200:
