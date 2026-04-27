@@ -1321,9 +1321,11 @@ class FactChecker:
         clipped = _truncate(text, 6000)
         prompt = (
             "Extract up to {max_claims} factual claims EXPLICITLY stated in this text. "
+            "The text might be an article, a short statement, a question, or a rumor. "
+            "If it's a short statement or a direct claim, extract it directly. "
             "Do not infer, assume, or use outside knowledge. "
             "Do not generate claims about people/entities unless directly asserted in the text. "
-            "Return ONLY a numbered list. If there are no factual claims, reply with EXACTLY 'NONE'.\n\n"
+            "Return ONLY a numbered list. If there are absolutely no factual claims or premises, reply with EXACTLY 'NONE'.\n\n"
             "Text: {text}"
         ).format(max_claims=max_claims, text=clipped)
 
@@ -1356,9 +1358,9 @@ class FactChecker:
     def fact_check_claim(self, claim: str) -> Dict[str, Any]:
         prompt = (
             "Fact-check this claim with high accuracy. Provide:\n"
-            "1. Verdict (TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE)\n"
+            "1. Verdict (TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/UNVERIFIABLE)\n"
             "2. Confidence level (0-100%)\n"
-            "3. Brief explanation (2-3 sentences)\n"
+            "3. Brief explanation (2-3 sentences). Do NOT refuse to fact-check by saying you cannot browse the internet or access real-time data; use your best existing knowledge.\n"
             "4. Key sources used as a list of canonical URLs. Each source MUST be a full http(s) URL. "
             "Do not include reference numbers or titles, only URLs.\n\n"
             "Claim: {claim}\n\n"
@@ -1441,15 +1443,18 @@ class FactChecker:
             return []
         clipped = _truncate(text, 7000)
         prompt = (
-            f"Extract and fact-check up to {max_claims} concrete factual claims from this article text. "
-            "Use reliable sources and avoid fact-checking UI text, bylines, captions, cookie notices, or navigation. "
-            "Do not replace the article's event with an older similar event. "
+            f"Extract and fact-check up to {max_claims} concrete factual claims from the provided text. "
+            "The text might be an article, a short statement, a question, or a rumor. "
+            "If it's a short statement or a direct claim, fact-check it directly. "
+            "Use your internal knowledge to verify the claims to the best of your ability. "
+            "Do NOT refuse to answer by saying you cannot browse the internet or access current data; provide the best fact-check based on your existing knowledge. "
             "Return ONLY JSON with this exact shape: "
-            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE",'
+            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE|UNVERIFIABLE",'
             '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
             "Confidence must be an integer from 1 to 100. "
-            "If there are no factual claims, return {\"claims\":[]}.\n\n"
-            f"Article text: {clipped}"
+            "Even if the text is short or conversational, identify the core premise and fact-check it. "
+            "Only return {\"claims\":[]} if absolutely no claim can be derived.\n\n"
+            f"Text to analyze: {clipped}"
         )
 
         payload = {
@@ -1535,6 +1540,7 @@ class FactChecker:
                             "Extract the main factual assertions and text-based claims from that content that a third-party could verify. "
                             "Ignore all UI elements, metadata, timestamps, usernames, profile pictures, and engagement metrics (likes/retweets). "
                             "Do NOT extract claims about who posted what or when. "
+                            "If the text is short or a single statement, treat it as a claim. "
                             "Return ONLY the claims as a numbered list. If none, respond with 'NONE'."
                         ),
                     }
@@ -1595,12 +1601,14 @@ class FactChecker:
                             "Use OCR to extract visible text, labels, quotes, numbers, and charts. "
                             "CRITICAL: DO NOT just describe objects in the image (e.g., 'The image displays a flag'). "
                             "Focus exclusively on extracting and fact-checking assertions, statements, text-based claims, or statistics. "
-                            "Ignore browser UI, app chrome, usernames, profile pictures, timestamps, engagement counts, and share buttons. "
-                            "Use your extensive internal knowledge base to thoroughly verify these claims and provide external canonical sources. "
+                            "If the image contains any text, premise, or implied claim, fact-check it. "
+                            "Use your extensive internal knowledge base to thoroughly verify these claims. "
+                            "Do NOT refuse to answer by saying you cannot browse the internet or access current data; provide the best assessment possible based on your existing knowledge. "
                             "Return ONLY JSON with this exact shape: "
-                            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE",'
+                            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE|UNVERIFIABLE",'
                             '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
-                            "Sources must be full http(s) URLs when available. If there are no factual assertions or text claims to check, return {\"claims\":[]}."
+                            "Sources must be full http(s) URLs when available. "
+                            "Only return {\"claims\":[]} if absolutely no text or factual assertion is present."
                         ),
                     }
                 ],
