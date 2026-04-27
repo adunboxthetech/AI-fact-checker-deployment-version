@@ -14,13 +14,19 @@ import requests
 from bs4 import BeautifulSoup
 from readability import Document
 
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+def _get_env_var_insensitive(key: str) -> Optional[str]:
+    for k, v in os.environ.items():
+        if k.lower() == key.lower():
+            return v
+    return None
+
+GEMINI_API_KEY = _get_env_var_insensitive('GEMINI_API_KEY') or _get_env_var_insensitive('GOOGLE_API_KEY')
 GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_PRIMARY_MODEL = "gemini-2.5-flash-lite"
 GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"]
 
 # Groq API configuration — primary provider (OpenAI-compatible, higher free-tier RPM)
-GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GROQ_API_KEY = _get_env_var_insensitive('GROQ_API_KEY')
 GROQ_URL_BASE = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
 GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -1049,11 +1055,11 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 class FactChecker:
     def __init__(self, api_key: Optional[str] = None, groq_api_key: Optional[str] = None):
         # Gemini key (fallback provider)
-        resolved_gemini = api_key or os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY") or ""
+        resolved_gemini = api_key or _get_env_var_insensitive("GEMINI_API_KEY") or GEMINI_API_KEY or _get_env_var_insensitive("GOOGLE_API_KEY") or ""
         self.gemini_api_key = resolved_gemini.strip()
 
         # Groq key (primary provider — higher RPM, dedicated LPU hardware)
-        resolved_groq = groq_api_key or os.getenv("GROQ_API_KEY") or GROQ_API_KEY or ""
+        resolved_groq = groq_api_key or _get_env_var_insensitive("GROQ_API_KEY") or GROQ_API_KEY or ""
         self.groq_api_key = resolved_groq.strip()
 
         # At least one provider must be configured

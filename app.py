@@ -13,6 +13,7 @@ except Exception:
 from api.core import (
     GEMINI_API_KEY,
     GROQ_API_KEY,
+    _get_env_var_insensitive,
     fact_check_text_input,
     fact_check_url_input,
     fact_check_image_input,
@@ -35,8 +36,8 @@ def serve_static(filename):
 @app.route('/health')
 @app.route('/api/health')
 def health_check():
-    groq_set = bool(os.environ.get("GROQ_API_KEY") or GROQ_API_KEY)
-    gemini_set = bool(os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY or os.environ.get("GOOGLE_API_KEY"))
+    groq_set = bool(_get_env_var_insensitive("GROQ_API_KEY") or GROQ_API_KEY)
+    gemini_set = bool(_get_env_var_insensitive("GEMINI_API_KEY") or GEMINI_API_KEY or _get_env_var_insensitive("GOOGLE_API_KEY"))
     return jsonify({
         "status": "healthy",
         "timestamp": time.time(),
