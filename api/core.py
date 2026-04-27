@@ -3,6 +3,7 @@ import json
 import os
 import re
 import time
+import datetime
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -1319,7 +1320,9 @@ class FactChecker:
         if not text:
             return []
         clipped = _truncate(text, 6000)
+        current_date = datetime.date.today().isoformat()
         prompt = (
+            f"Today's date is {current_date}. "
             "Extract up to {max_claims} factual claims EXPLICITLY stated in this text. "
             "The text might be an article, a short statement, a question, or a rumor. "
             "If it's a short statement or a direct claim, extract it directly. "
@@ -1356,7 +1359,9 @@ class FactChecker:
         return claims[:max_claims]
 
     def fact_check_claim(self, claim: str) -> Dict[str, Any]:
+        current_date = datetime.date.today().isoformat()
         prompt = (
+            f"Today's date is {current_date}. "
             "Fact-check this claim with high accuracy. Provide:\n"
             "1. Verdict (TRUE/FALSE/PARTIALLY TRUE/INSUFFICIENT EVIDENCE/UNVERIFIABLE)\n"
             "2. Confidence level (0-100%)\n"
@@ -1442,7 +1447,9 @@ class FactChecker:
         if not text:
             return []
         clipped = _truncate(text, 7000)
+        current_date = datetime.date.today().isoformat()
         prompt = (
+            f"Today's date is {current_date}. "
             f"Extract and fact-check up to {max_claims} concrete factual claims from the provided text. "
             "The text might be an article, a short statement, a question, or a rumor. "
             "If it's a short statement or a direct claim, fact-check it directly. "
@@ -1527,6 +1534,7 @@ class FactChecker:
         self.last_image_error = ""
         if not image_url and not image_data_url:
             return []
+        current_date = datetime.date.today().isoformat()
         messages = [
             {
                 "role": "user",
@@ -1534,6 +1542,7 @@ class FactChecker:
                     {
                         "type": "text",
                         "text": (
+                            f"Today's date is {current_date}. "
                             "Analyze this image. It may be a social-media post image, meme, screenshot, chart, news card, headline, or article. "
                             "Focus ONLY on substantive text, numbers, charts, quotes, and statistics visible inside the image. "
                             "CRITICAL: DO NOT just describe what objects or things are in the image (e.g., 'The image displays a flag'). "
@@ -1589,6 +1598,7 @@ class FactChecker:
         self.last_image_error = ""
         if not image_url and not image_data_url:
             return []
+        current_date = datetime.date.today().isoformat()
         messages = [
             {
                 "role": "user",
@@ -1596,6 +1606,7 @@ class FactChecker:
                     {
                         "type": "text",
                         "text": (
+                            f"Today's date is {current_date}. "
                             f"Analyze this image and fact-check up to {max_claims} substantive factual claims visible in it. "
                             "The image may be a Reddit/social-media image, meme, screenshot, chart, stock card, headline, or news card. "
                             "Use OCR to extract visible text, labels, quotes, numbers, and charts. "
