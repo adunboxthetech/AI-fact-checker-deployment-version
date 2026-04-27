@@ -35,12 +35,14 @@ def serve_static(filename):
 @app.route('/health')
 @app.route('/api/health')
 def health_check():
+    groq_set = bool(os.environ.get("GROQ_API_KEY") or GROQ_API_KEY)
+    gemini_set = bool(os.environ.get("GEMINI_API_KEY") or GEMINI_API_KEY or os.environ.get("GOOGLE_API_KEY"))
     return jsonify({
         "status": "healthy",
         "timestamp": time.time(),
-        "groq_api_key_set": bool(GROQ_API_KEY),
-        "gemini_api_key_set": bool(GEMINI_API_KEY),
-        "primary_provider": "groq" if GROQ_API_KEY else ("gemini" if GEMINI_API_KEY else "none"),
+        "groq_api_key_set": groq_set,
+        "gemini_api_key_set": gemini_set,
+        "primary_provider": "groq" if groq_set else ("gemini" if gemini_set else "none"),
     })
 
 

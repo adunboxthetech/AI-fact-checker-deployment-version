@@ -1049,7 +1049,7 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 class FactChecker:
     def __init__(self, api_key: Optional[str] = None, groq_api_key: Optional[str] = None):
         # Gemini key (fallback provider)
-        resolved_gemini = api_key or os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY or ""
+        resolved_gemini = api_key or os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY or os.getenv("GOOGLE_API_KEY") or ""
         self.gemini_api_key = resolved_gemini.strip()
 
         # Groq key (primary provider — higher RPM, dedicated LPU hardware)
