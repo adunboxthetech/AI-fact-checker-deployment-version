@@ -19,6 +19,13 @@ GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_PRIMARY_MODEL = "gemini-2.5-flash-lite"
 GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"]
 
+# Groq API configuration — primary provider (OpenAI-compatible, higher free-tier RPM)
+GROQ_API_KEY = os.getenv('GROQ_API_KEY')
+GROQ_URL_BASE = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
+GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
+GROQ_FALLBACK_TEXT_MODEL = "llama-3.1-8b-instant"
+
 DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -71,7 +78,9 @@ GEMINI_INITIAL_RETRY_DELAY_SECONDS = 3.0
 GEMINI_BACKOFF_MULTIPLIER = 2.0
 MAX_GEMINI_RETRY_DELAY_SECONDS = 15.0
 GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
-GEMINI_INTER_REQUEST_DELAY = 4.0  # seconds between Gemini API calls to respect free-tier RPM
+GEMINI_INTER_REQUEST_DELAY = 2.0  # seconds between API calls (Groq has ~30-60 RPM, Gemini ~15 RPM)
+GROQ_INTER_REQUEST_DELAY = 1.5  # Groq has higher RPM limits than Gemini
+GROQ_MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024  # Groq limits base64 images to 4MB
 
 
 @dataclass
@@ -1038,13 +1047,22 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
 
 class FactChecker:
-    def __init__(self, api_key: Optional[str] = None):
-        resolved_key = api_key or os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY or ""
-        self.api_key = resolved_key.strip()
-        if not self.api_key:
-            raise ValueError("GEMINI_API_KEY is not set")
-        if "ENTER_YOUR_GEMINI" in self.api_key.upper():
-            raise ValueError("GEMINI_API_KEY is still set to the placeholder value")
+    def __init__(self, api_key: Optional[str] = None, groq_api_key: Optional[str] = None):
+        # Gemini key (fallback provider)
+        resolved_gemini = api_key or os.getenv("GEMINI_API_KEY") or GEMINI_API_KEY or ""
+        self.gemini_api_key = resolved_gemini.strip()
+
+        # Groq key (primary provider — higher RPM, dedicated LPU hardware)
+        resolved_groq = groq_api_key or os.getenv("GROQ_API_KEY") or GROQ_API_KEY or ""
+        self.groq_api_key = resolved_groq.strip()
+
+        # At least one provider must be configured
+        if not self.gemini_api_key and not self.groq_api_key:
+            raise ValueError("No API key configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
+
+        # Keep legacy attribute for compatibility with _analyze_single_image_url
+        self.api_key = self.gemini_api_key or self.groq_api_key
+
         self.headers = {
             "Content-Type": "application/json",
         }
@@ -1177,9 +1195,119 @@ class FactChecker:
             return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
 
+    def _post_groq(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS, use_vision: bool = False) -> Optional[GeminiResponse]:
+        """Call Groq API (OpenAI-compatible) with retry and model fallback."""
+        if not self.groq_api_key:
+            return None
+
+        last_response: Optional[GeminiResponse] = None
+        last_error: Optional[str] = None
+
+        # Select models based on whether vision is needed
+        if use_vision:
+            models = [GROQ_VISION_MODEL]
+        else:
+            models = [GROQ_TEXT_MODEL, GROQ_FALLBACK_TEXT_MODEL]
+
+        for model_index, model in enumerate(models):
+            groq_payload: Dict[str, Any] = {
+                "model": model,
+                "messages": payload.get("messages", []),
+            }
+            # Groq supports response_format for JSON mode
+            if payload.get("response_format", {}).get("type") == "json_object":
+                groq_payload["response_format"] = {"type": "json_object"}
+
+            encoded = json.dumps(groq_payload).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.groq_api_key}",
+            }
+            model_failed = False
+            for attempt in range(retries):
+                try:
+                    req = urllib_request.Request(
+                        GROQ_URL_BASE,
+                        data=encoded,
+                        headers=headers,
+                        method="POST",
+                    )
+                    with urllib_request.urlopen(req, timeout=45) as upstream:
+                        body = upstream.read().decode("utf-8", errors="replace")
+                        status_code = int(getattr(upstream, "status", 200))
+                        # Groq responses are already in OpenAI format — no translation needed
+                        response = GeminiResponse(status_code=status_code, body=body, headers=dict(upstream.headers))
+                except urllib_error.HTTPError as err:
+                    body = ""
+                    try:
+                        body = err.read().decode("utf-8", errors="replace")
+                    except Exception:
+                        body = ""
+                    response = GeminiResponse(status_code=int(err.code), body=body, headers=dict(err.headers or {}))
+                except Exception as err:
+                    last_error = f"{type(err).__name__}: {err}"
+                    response = None
+
+                if response is not None:
+                    last_response = response
+                    if response.status_code == 200:
+                        return response
+                    if response.status_code not in GEMINI_TRANSIENT_STATUS_CODES:
+                        model_failed = True
+                        break
+                    if model_index < len(models) - 1:
+                        model_failed = True
+                        break
+                if attempt < retries - 1:
+                    retry_after = _retry_after_seconds(last_response)
+                    delay = retry_after if retry_after is not None else _retry_delay_seconds(attempt)
+                    delay = min(delay, MAX_GEMINI_RETRY_DELAY_SECONDS)
+                    time.sleep(delay)
+            if model_failed and model_index < len(models) - 1:
+                time.sleep(0.5)
+                continue
+
+        if last_response is None and last_error:
+            return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
+        return last_response
+
+    def _has_vision_content(self, payload: Dict[str, Any]) -> bool:
+        """Check if payload contains image content (vision request)."""
+        for msg in payload.get("messages", []):
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "image_url":
+                        return True
+        return False
+
+    def _post_api(self, payload: Dict[str, Any]) -> Optional[GeminiResponse]:
+        """Unified API call: tries Groq first (primary), falls back to Gemini.
+
+        Groq is preferred because:
+        - Higher free-tier RPM (30-60 vs 15)
+        - Dedicated LPU hardware (fewer 503 "high demand" errors)
+        - OpenAI-compatible format (simpler, no translation needed)
+        """
+        use_vision = self._has_vision_content(payload)
+
+        # Try Groq first (if key is configured)
+        if self.groq_api_key:
+            response = self._post_groq(payload, use_vision=use_vision)
+            if response is not None and response.status_code == 200:
+                return response
+
+        # Fall back to Gemini
+        if self.gemini_api_key:
+            return self._post_gemini(payload)
+
+        # If we got a non-200 from Groq and no Gemini key, return whatever Groq gave us
+        return response if self.groq_api_key else None
+
     def _rate_limit_pause(self):
-        """Pause between Gemini API calls to respect free-tier RPM limits."""
-        time.sleep(GEMINI_INTER_REQUEST_DELAY)
+        """Pause between API calls to respect free-tier RPM limits."""
+        delay = GROQ_INTER_REQUEST_DELAY if self.groq_api_key else GEMINI_INTER_REQUEST_DELAY
+        time.sleep(delay)
 
     def extract_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[str]:
         if not text:
@@ -1197,7 +1325,7 @@ class FactChecker:
             "model": GEMINI_PRIMARY_MODEL,
             "messages": [{"role": "user", "content": prompt}],
         }
-        response = self._post_gemini(payload)
+        response = self._post_api(payload)
         if response is None or response.status_code != 200:
             return []
         try:
@@ -1236,7 +1364,7 @@ class FactChecker:
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
         }
-        response = self._post_gemini(payload)
+        response = self._post_api(payload)
 
         if response is None or response.status_code != 200:
             status = response.status_code if response is not None else "no-response"
@@ -1323,7 +1451,7 @@ class FactChecker:
             "messages": [{"role": "user", "content": prompt}],
             "response_format": {"type": "json_object"},
         }
-        response = self._post_gemini(payload)
+        response = self._post_api(payload)
         if response is None or response.status_code != 200:
             self.last_text_error = _extract_error_message(response)
             return []
@@ -1415,7 +1543,7 @@ class FactChecker:
             "model": GEMINI_PRIMARY_MODEL,
             "messages": messages,
         }
-        response = self._post_gemini(payload)
+        response = self._post_api(payload)
         if response is None or response.status_code != 200:
             self.last_image_error = _extract_error_message(response)
             return []
@@ -1478,7 +1606,7 @@ class FactChecker:
             "messages": messages,
             "response_format": {"type": "json_object"},
         }
-        response = self._post_gemini(payload)
+        response = self._post_api(payload)
         if response is None or response.status_code != 200:
             self.last_image_error = _extract_error_message(response)
             return []
@@ -1550,7 +1678,7 @@ def _get_checker() -> Tuple[Optional[FactChecker], Optional[str]]:
 def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
+        return {"error": checker_error or "No API key configured (set GROQ_API_KEY and/or GEMINI_API_KEY)"}, 500
     text = _clean_text(text)
     if not text:
         return {"error": "No text provided"}, 400
@@ -1594,7 +1722,7 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
 
 def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
     try:
-        checker = FactChecker(api_key=api_key)
+        checker = FactChecker(api_key=api_key, groq_api_key=os.getenv('GROQ_API_KEY') or GROQ_API_KEY)
         image_data_url = _download_image_as_data_url(image_url)
         checks = checker.fact_check_image_content(
             image_url=None if image_data_url else image_url,

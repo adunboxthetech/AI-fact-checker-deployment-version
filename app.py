@@ -12,6 +12,7 @@ except Exception:
 
 from api.core import (
     GEMINI_API_KEY,
+    GROQ_API_KEY,
     fact_check_text_input,
     fact_check_url_input,
     fact_check_image_input,
@@ -37,7 +38,9 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "timestamp": time.time(),
-        "api_key_set": bool(GEMINI_API_KEY),
+        "groq_api_key_set": bool(GROQ_API_KEY),
+        "gemini_api_key_set": bool(GEMINI_API_KEY),
+        "primary_provider": "groq" if GROQ_API_KEY else ("gemini" if GEMINI_API_KEY else "none"),
     })
 
 
