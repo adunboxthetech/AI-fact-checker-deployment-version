@@ -924,8 +924,8 @@ class MysticalEngine {
                     this.particles.push({
                         x: offsetX + px,
                         y: offsetY + py,
-                        vx: (Math.random() - 0.5) * 4,
-                        vy: (Math.random() * -4) - 2, // Move up initially
+                        vx: (Math.random() - 0.5) * 2.5,
+                        vy: (Math.random() * -3) - 1.5, // Move up initially
                         life: 1.0,
                         decay: Math.random() * 0.008 + 0.004, // Slower decay for longer life
                         size: Math.random() * 1.5 + 0.5
@@ -965,12 +965,12 @@ class MysticalEngine {
             const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
             
             // Attraction to center (gravity increases as life decays)
-            const force = 0.05 + (1.0 - p.life) * 0.2;
-            p.vx += (dx / dist) * force * 15;
-            p.vy += (dy / dist) * force * 15;
+            const force = 0.02 + (1.0 - p.life) * 0.1;
+            p.vx += (dx / dist) * force * 8;
+            p.vy += (dy / dist) * force * 8;
             
             // Swirling force around center
-            const swirlForce = 1.2;
+            const swirlForce = 0.4;
             p.vx += (-dy / dist) * swirlForce;
             p.vy += (dx / dist) * swirlForce;
             
@@ -978,17 +978,17 @@ class MysticalEngine {
             p.y += p.vy;
             
             // Add some damping
-            p.vx *= 0.92;
-            p.vy *= 0.92;
+            p.vx *= 0.94;
+            p.vy *= 0.94;
             
-            // Swirl noise
-            p.vx += (Math.random() - 0.5) * 0.8;
-            p.vy += (Math.random() - 0.5) * 0.8;
+            // Chaotic "molecular" noise
+            p.vx += (Math.random() - 0.5) * 1.5;
+            p.vy += (Math.random() - 0.5) * 1.5;
             
             p.life -= p.decay;
             
-            // Fade out based on distance to center and life
-            const alpha = Math.min(1.0, p.life * (dist > 15 ? 1.0 : dist / 15.0));
+            // Fade out based on distance to center and life (capped for a calm, faded look)
+            const alpha = Math.min(0.4, p.life * (dist > 30 ? 0.6 : (dist / 30.0) * 0.6));
             
             if (alpha > 0) {
                 this.ctx.globalAlpha = alpha;
