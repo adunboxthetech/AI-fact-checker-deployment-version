@@ -846,7 +846,8 @@ class MysticalEngine {
         const tCtx = tempCanvas.getContext('2d');
         
         tCtx.font = computedStyle.font;
-        tCtx.fillStyle = '#ffffff'; // White particles
+        this.textColor = computedStyle.color;
+        tCtx.fillStyle = this.textColor; 
         tCtx.textBaseline = 'top';
         
         // Simple word wrapping for drawing
@@ -909,7 +910,7 @@ class MysticalEngine {
         this.ctx.clearRect(0, 0, this.particleCanvas.width, this.particleCanvas.height);
         
         let activeParticles = 0;
-        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillStyle = this.textColor || '#ffffff';
         this.ctx.beginPath();
         
         for (let i = 0; i < this.particles.length; i++) {

@@ -83,7 +83,7 @@ h1, h2, h3, h4, h5, .app-title {
 
 [data-theme="light"] .webgl-cloud {
   mix-blend-mode: multiply;
-  opacity: 0.3;
+  opacity: 0.6;
 }
 
 .particle-canvas {
