@@ -54,6 +54,24 @@ class FactCheckerApp {
             }
         });
 
+        // Handle pasting images
+        document.addEventListener('paste', (e) => {
+            // Ignore if pasting into a specific input that might want text
+            // But actually we want to catch it globally if it's an image.
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            const files = [];
+            for (let index in items) {
+                const item = items[index];
+                if (item.kind === 'file' && item.type.startsWith('image/')) {
+                    files.push(item.getAsFile());
+                }
+            }
+            if (files.length > 0) {
+                e.preventDefault();
+                this.loadImages(files);
+            }
+        });
+
         // Auto-resize textarea
         this.textInput.addEventListener('input', function() {
             this.style.height = 'auto';
@@ -83,6 +101,9 @@ class FactCheckerApp {
     renderImagePreview(dataUrl) {
         if (!this.imagePreview) return;
         this.imagePreview.classList.remove('hidden');
+        if (this.textInput && this.textInput.parentElement) {
+            this.textInput.parentElement.style.display = 'none';
+        }
         this.imagePreview.innerHTML = `
             <div class="thumb">
                 <img src="${this.escapeAttribute(dataUrl)}" alt="Uploaded image preview" />
@@ -93,6 +114,9 @@ class FactCheckerApp {
             this.imageDataUrl = null;
             this.imagePreview.classList.add('hidden');
             this.imagePreview.innerHTML = '';
+            if (this.textInput && this.textInput.parentElement) {
+                this.textInput.parentElement.style.display = '';
+            }
             this.updateFactCheckButtonState();
         });
         this.updateFactCheckButtonState();
@@ -169,7 +193,10 @@ class FactCheckerApp {
         }
 
         // Trigger the magical text shatter animation first
-        if (text && typeof mysticalEngine !== 'undefined') {
+        if (hasImage && typeof mysticalEngine !== 'undefined') {
+            const imgElement = this.imagePreview.querySelector('img');
+            mysticalEngine.shatterImage(imgElement, () => this.executeFactCheck(text, hasImage));
+        } else if (text && typeof mysticalEngine !== 'undefined') {
             mysticalEngine.shatterText(this.textInput, () => this.executeFactCheck(text, hasImage));
         } else {
             this.executeFactCheck(text, hasImage);
@@ -251,6 +278,17 @@ class FactCheckerApp {
         // Restore clear button to icon-only
         this.clearBtn.innerHTML = '<i class="fas fa-eraser"></i>';
         
+        // Remove image
+        this.imageDataUrl = null;
+        if (this.imagePreview) {
+            this.imagePreview.classList.add('hidden');
+            this.imagePreview.innerHTML = '';
+        }
+        if (this.textInput && this.textInput.parentElement) {
+            this.textInput.parentElement.style.display = '';
+        }
+        this.updateFactCheckButtonState();
+
         if (typeof mysticalEngine !== 'undefined') {
             mysticalEngine.resetInput();
         }
@@ -967,6 +1005,62 @@ class MysticalEngine {
         
         // Allow API call to proceed
         if (onComplete) setTimeout(onComplete, 500); 
+    }
+    
+    shatterImage(imageElement, onComplete) {
+        if (!imageElement) {
+            if (onComplete) onComplete();
+            return;
+        }
+        
+        const rect = imageElement.getBoundingClientRect();
+        
+        if (this.floatingPrompt) {
+            this.floatingPrompt.classList.add('shattering');
+        }
+        
+        this.setCloudIntensity(true); // Intensify cloud during processing
+        
+        // Hide original image smoothly
+        imageElement.style.transition = 'opacity 0.5s ease';
+        imageElement.style.opacity = '0';
+        
+        const ghost = document.createElement('img');
+        ghost.src = imageElement.src;
+        document.body.appendChild(ghost);
+        
+        ghost.style.position = 'fixed';
+        ghost.style.left = rect.left + 'px';
+        ghost.style.top = rect.top + 'px';
+        ghost.style.width = rect.width + 'px';
+        ghost.style.height = rect.height + 'px';
+        ghost.style.pointerEvents = 'none';
+        ghost.style.zIndex = '1000';
+        ghost.style.transition = 'transform 1.5s cubic-bezier(0.4, 0, 0.2, 1), opacity 1.5s ease, filter 1.5s ease';
+        ghost.style.borderRadius = window.getComputedStyle(imageElement).borderRadius;
+        ghost.style.objectFit = 'cover';
+        
+        // Force reflow
+        ghost.getBoundingClientRect();
+        
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        
+        requestAnimationFrame(() => {
+            const dx = cx - rect.left - (rect.width / 2);
+            const dy = cy - rect.top - (rect.height / 2);
+            
+            const rRot = (Math.random() - 0.5) * 60;
+            ghost.style.transform = `translate(${dx}px, ${dy}px) scale(0.1) rotate(${rRot}deg)`;
+            ghost.style.opacity = '0';
+            ghost.style.filter = 'blur(10px)';
+        });
+        
+        setTimeout(() => {
+            ghost.remove();
+        }, 1600);
+        
+        if (onComplete) setTimeout(onComplete, 500);
     }
     
     animateParticles() {
