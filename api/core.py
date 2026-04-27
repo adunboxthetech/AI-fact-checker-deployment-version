@@ -23,8 +23,8 @@ def _get_env_var_insensitive(key: str) -> Optional[str]:
 
 GEMINI_API_KEY = _get_env_var_insensitive('GEMINI_API_KEY') or _get_env_var_insensitive('GOOGLE_API_KEY')
 GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_PRIMARY_MODEL = "gemini-2.5-flash-lite"
-GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"]
+GEMINI_PRIMARY_MODEL = "gemini-2.0-flash"
+GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite", "gemini-2.5-flash"]
 
 # Groq API configuration — primary provider (OpenAI-compatible, higher free-tier RPM)
 GROQ_API_KEY = _get_env_var_insensitive('GROQ_API_KEY')
@@ -80,13 +80,13 @@ MAX_IMAGE_CLAIMS = 4
 MAX_IMAGES_TO_ANALYZE = 2
 MAX_CONCURRENT_IMAGE_REQUESTS = 1
 MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
-GEMINI_RETRY_ATTEMPTS = 3
-GEMINI_INITIAL_RETRY_DELAY_SECONDS = 3.0
+GEMINI_RETRY_ATTEMPTS = 2
+GEMINI_INITIAL_RETRY_DELAY_SECONDS = 1.5
 GEMINI_BACKOFF_MULTIPLIER = 2.0
-MAX_GEMINI_RETRY_DELAY_SECONDS = 15.0
+MAX_GEMINI_RETRY_DELAY_SECONDS = 8.0
 GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
-GEMINI_INTER_REQUEST_DELAY = 2.0  # seconds between API calls (Groq has ~30-60 RPM, Gemini ~15 RPM)
-GROQ_INTER_REQUEST_DELAY = 1.5  # Groq has higher RPM limits than Gemini
+GEMINI_INTER_REQUEST_DELAY = 0.5  # seconds between API calls
+GROQ_INTER_REQUEST_DELAY = 0.3  # Groq has higher RPM limits than Gemini
 GROQ_MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024  # Groq limits base64 images to 4MB
 
 
@@ -1140,17 +1140,23 @@ class FactChecker:
         messages = payload.get("messages", [])
         contents = self._translate_messages_to_contents(messages)
 
+        use_search = bool(payload.get("use_web_search"))
+
         # Build generation config
+        # CRITICAL: Gemini does NOT support response_mime_type together with tools
+        # (googleSearch). When search is enabled, we ask for JSON in the prompt instead.
         generation_config: Dict[str, Any] = {}
-        if payload.get("response_format", {}).get("type") == "json_object":
+        if payload.get("response_format", {}).get("type") == "json_object" and not use_search:
             generation_config["response_mime_type"] = "application/json"
+        # Disable thinking on 2.5+ models for speed — we don't need reasoning traces
+        # (thinkingConfig is silently ignored by models that don't support it)
 
         for model_index, model in enumerate(models):
             api_url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={self.gemini_api_key}"
             native_payload = {"contents": contents}
             if generation_config:
                 native_payload["generationConfig"] = generation_config
-            if payload.get("use_web_search"):
+            if use_search:
                 native_payload["tools"] = [{"googleSearch": {}}]
             encoded_payload = json.dumps(native_payload).encode("utf-8")
             model_failed = False
@@ -1297,21 +1303,31 @@ class FactChecker:
         - Higher free-tier RPM (30-60 vs 15)
         - Dedicated LPU hardware (fewer 503 "high demand" errors)
         - OpenAI-compatible format (simpler, no translation needed)
+
+        When use_web_search is set, we prefer Gemini (Google Search Grounding).
+        If Gemini fails, we fall back to Groq without search.
         """
         use_vision = self._has_vision_content(payload)
         use_web_search = payload.get("use_web_search", False)
 
-        # If web search is needed, we must use Gemini because Groq doesn't support Google Search Grounding natively here.
+        # If web search is needed, try Gemini first (Google Search Grounding)
         if use_web_search and self.gemini_api_key:
             response = self._post_gemini(payload)
             if response is not None and response.status_code == 200:
                 return response
-            # If Gemini fails, we could try Groq without search, but since search is requested, maybe just return Gemini's failure.
+            # Gemini failed — fall back to Groq without search
+            if self.groq_api_key:
+                fallback_payload = {k: v for k, v in payload.items() if k != "use_web_search"}
+                response = self._post_groq(fallback_payload, use_vision=use_vision)
+                if response is not None and response.status_code == 200:
+                    return response
             return response
 
         # Try Groq first (if key is configured)
         if self.groq_api_key:
-            response = self._post_groq(payload, use_vision=use_vision)
+            # Strip use_web_search from Groq payloads (not supported)
+            groq_payload = {k: v for k, v in payload.items() if k != "use_web_search"}
+            response = self._post_groq(groq_payload, use_vision=use_vision)
             if response is not None and response.status_code == 200:
                 return response
 
@@ -1323,7 +1339,7 @@ class FactChecker:
         return response if self.groq_api_key else None
 
     def _rate_limit_pause(self):
-        """Pause between API calls to respect free-tier RPM limits."""
+        """Brief pause between API calls to respect free-tier RPM limits."""
         delay = GROQ_INTER_REQUEST_DELAY if self.groq_api_key else GEMINI_INTER_REQUEST_DELAY
         time.sleep(delay)
 
