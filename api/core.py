@@ -3,7 +3,7 @@ import json
 import os
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
@@ -16,7 +16,7 @@ from readability import Document
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-GEMINI_PRIMARY_MODEL = "gemini-3-flash-preview"
+GEMINI_PRIMARY_MODEL = "gemini-2.5-flash"
 GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash-lite"]
 
 DEFAULT_HEADERS = {
@@ -63,14 +63,15 @@ BOILERPLATE_MARKERS = [
 MAX_TEXT_CHARS = 12000
 MAX_CLAIMS = 6
 MAX_IMAGE_CLAIMS = 4
-MAX_IMAGES_TO_ANALYZE = 4
-MAX_CONCURRENT_IMAGE_REQUESTS = 2
+MAX_IMAGES_TO_ANALYZE = 2
+MAX_CONCURRENT_IMAGE_REQUESTS = 1
 MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
 GEMINI_RETRY_ATTEMPTS = 3
-GEMINI_INITIAL_RETRY_DELAY_SECONDS = 2.0
+GEMINI_INITIAL_RETRY_DELAY_SECONDS = 3.0
 GEMINI_BACKOFF_MULTIPLIER = 2.0
-MAX_GEMINI_RETRY_DELAY_SECONDS = 8.0
+MAX_GEMINI_RETRY_DELAY_SECONDS = 15.0
 GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+GEMINI_INTER_REQUEST_DELAY = 4.0  # seconds between Gemini API calls to respect free-tier RPM
 
 
 @dataclass
@@ -1053,13 +1054,14 @@ class FactChecker:
         self.last_text_error = ""
 
     def _post_gemini(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS) -> Optional[GeminiResponse]:
-        """Retry transient upstream errors (especially rate limits)."""
+        """Retry transient upstream errors with model fallback on ANY non-200."""
         last_response: Optional[GeminiResponse] = None
         last_error: Optional[str] = None
         models = _models_for_payload(payload)
         for model_index, model in enumerate(models):
             model_payload = {**payload, "model": model}
             encoded_payload = json.dumps(model_payload).encode("utf-8")
+            model_failed = False
             for attempt in range(retries):
                 try:
                     req = urllib_request.Request(
@@ -1068,7 +1070,7 @@ class FactChecker:
                         headers=self.headers,
                         method="POST",
                     )
-                    with urllib_request.urlopen(req, timeout=30) as upstream:
+                    with urllib_request.urlopen(req, timeout=45) as upstream:
                         body = upstream.read().decode("utf-8", errors="replace")
                         status_code = int(getattr(upstream, "status", 200))
                         response = GeminiResponse(status_code=status_code, body=body, headers=dict(upstream.headers))
@@ -1087,18 +1089,30 @@ class FactChecker:
                     last_response = response
                     if response.status_code == 200:
                         return response
+                    # Non-transient errors (400, 403, 404, etc.) → try next model immediately
                     if response.status_code not in GEMINI_TRANSIENT_STATUS_CODES:
-                        return response
-                    if response.status_code == 429 and model_index < len(models) - 1:
+                        model_failed = True
+                        break
+                    # Transient error (429, 5xx) with more models available → try next model
+                    if model_index < len(models) - 1:
+                        model_failed = True
                         break
                 if attempt < retries - 1:
                     retry_after = _retry_after_seconds(last_response)
                     delay = retry_after if retry_after is not None else _retry_delay_seconds(attempt)
                     delay = min(delay, MAX_GEMINI_RETRY_DELAY_SECONDS)
                     time.sleep(delay)
+            if model_failed and model_index < len(models) - 1:
+                # Brief pause before trying next model
+                time.sleep(1.0)
+                continue
         if last_response is None and last_error:
             return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
+
+    def _rate_limit_pause(self):
+        """Pause between Gemini API calls to respect free-tier RPM limits."""
+        time.sleep(GEMINI_INTER_REQUEST_DELAY)
 
     def extract_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[str]:
         if not text:
@@ -1543,31 +1557,29 @@ def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
 
 
 def _analyze_image_urls_with_queue(checker: FactChecker, image_urls: List[str]) -> List[Dict[str, Any]]:
+    """Analyze images sequentially to avoid rate-limit exhaustion on free tier."""
     candidates = [url for url in image_urls[:MAX_IMAGES_TO_ANALYZE] if url]
     if not candidates:
         return []
 
-    results: List[Optional[Dict[str, Any]]] = [None] * len(candidates)
-    worker_count = min(MAX_CONCURRENT_IMAGE_REQUESTS, len(candidates))
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {
-            executor.submit(_analyze_single_image_url, checker.api_key, image_url): index
-            for index, image_url in enumerate(candidates)
-        }
-        for future in as_completed(futures):
-            index = futures[future]
-            try:
-                results[index] = future.result()
-            except Exception as exc:
-                results[index] = {
-                    "image_url": candidates[index],
-                    "status": "failed",
-                    "reason": f"{type(exc).__name__}: {exc}",
-                    "claims": [],
-                    "checks": [],
-                }
+    results: List[Dict[str, Any]] = []
+    for image_url in candidates:
+        # Rate-limit pause between image analysis calls
+        if results:
+            time.sleep(GEMINI_INTER_REQUEST_DELAY)
+        try:
+            result = _analyze_single_image_url(checker.api_key, image_url)
+            results.append(result)
+        except Exception as exc:
+            results.append({
+                "image_url": image_url,
+                "status": "failed",
+                "reason": f"{type(exc).__name__}: {exc}",
+                "claims": [],
+                "checks": [],
+            })
 
-    return [result for result in results if result is not None]
+    return results
 
 
 def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
@@ -1592,6 +1604,9 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     if should_analyze_text:
         results.extend(checker.fact_check_text_claims(text))
         text_analysis_error = checker.last_text_error
+        # Pause before any subsequent image analysis to avoid rate limits
+        if results:
+            checker._rate_limit_pause()
 
     image_analysis_results: List[Dict[str, Any]] = []
     image_analysis_skipped_reason = ""
