@@ -846,7 +846,8 @@ class MysticalEngine {
         const tCtx = tempCanvas.getContext('2d');
         
         tCtx.font = computedStyle.font;
-        this.textColor = computedStyle.color;
+        const currentTheme = document.documentElement.getAttribute('data-theme');
+        this.textColor = (currentTheme === 'light' || !currentTheme) ? '#000000' : '#ffffff';
         tCtx.fillStyle = this.textColor; 
         tCtx.textBaseline = 'top';
         
