@@ -54,6 +54,19 @@ class FactCheckerApp {
             }
         });
 
+        // Also allow Enter to send if focus is on the prompt container
+        // when image is loaded and textarea is hidden
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && this.imageDataUrl) {
+                // Only trigger if we're not inside another input, or we're at body level
+                const active = document.activeElement;
+                if (active === document.body || active.closest('.prompt-container')) {
+                    e.preventDefault();
+                    this.handleFactCheck();
+                }
+            }
+        });
+
         // Handle pasting images
         document.addEventListener('paste', (e) => {
             // Ignore if pasting into a specific input that might want text
@@ -101,8 +114,8 @@ class FactCheckerApp {
     renderImagePreview(dataUrl) {
         if (!this.imagePreview) return;
         this.imagePreview.classList.remove('hidden');
-        if (this.textInput && this.textInput.parentElement) {
-            this.textInput.parentElement.style.display = 'none';
+        if (this.textInput) {
+            this.textInput.style.display = 'none';
         }
         this.imagePreview.innerHTML = `
             <div class="thumb">
@@ -114,8 +127,8 @@ class FactCheckerApp {
             this.imageDataUrl = null;
             this.imagePreview.classList.add('hidden');
             this.imagePreview.innerHTML = '';
-            if (this.textInput && this.textInput.parentElement) {
-                this.textInput.parentElement.style.display = '';
+            if (this.textInput) {
+                this.textInput.style.display = '';
             }
             this.updateFactCheckButtonState();
         });
@@ -284,8 +297,8 @@ class FactCheckerApp {
             this.imagePreview.classList.add('hidden');
             this.imagePreview.innerHTML = '';
         }
-        if (this.textInput && this.textInput.parentElement) {
-            this.textInput.parentElement.style.display = '';
+        if (this.textInput) {
+            this.textInput.style.display = '';
         }
         this.updateFactCheckButtonState();
 
