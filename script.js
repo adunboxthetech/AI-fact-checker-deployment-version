@@ -867,14 +867,17 @@ class MysticalEngine {
     }
     
     shatterText(textElement, onComplete) {
+        const rect = textElement.getBoundingClientRect();
+        const computed = window.getComputedStyle(textElement);
+        
+        // Save the color before we hide it
+        const textColor = computed.color;
+        
         if (this.floatingPrompt) {
             this.floatingPrompt.classList.add('shattering');
         }
         
         this.setCloudIntensity(true); // Intensify cloud during processing
-        
-        const rect = textElement.getBoundingClientRect();
-        const computed = window.getComputedStyle(textElement);
         
         // Create a ghost div to hold the characters
         const ghost = document.createElement('div');
@@ -895,7 +898,7 @@ class MysticalEngine {
         ghost.style.boxSizing = computed.boxSizing;
         ghost.style.whiteSpace = 'pre-wrap';
         ghost.style.wordWrap = 'break-word';
-        ghost.style.color = computed.color;
+        ghost.style.color = textColor; // Use the saved visible color
         ghost.style.pointerEvents = 'none';
         ghost.style.zIndex = '1000';
         
