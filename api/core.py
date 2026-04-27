@@ -1530,9 +1530,10 @@ class FactChecker:
                         "type": "text",
                         "text": (
                             "Analyze this image. It may be a social-media post image, meme, screenshot, chart, news card, headline, or article. "
-                            "Focus ONLY on substantive text, numbers, charts, and visible claims inside the image. "
-                            "Extract the main factual claims from that content that a third-party could verify. "
-                            "CRITICAL: Ignore all UI elements, metadata, timestamps, usernames, profile pictures, and engagement metrics (likes/retweets). "
+                            "Focus ONLY on substantive text, numbers, charts, quotes, and statistics visible inside the image. "
+                            "CRITICAL: DO NOT just describe what objects or things are in the image (e.g., 'The image displays a flag'). "
+                            "Extract the main factual assertions and text-based claims from that content that a third-party could verify. "
+                            "Ignore all UI elements, metadata, timestamps, usernames, profile pictures, and engagement metrics (likes/retweets). "
                             "Do NOT extract claims about who posted what or when. "
                             "Return ONLY the claims as a numbered list. If none, respond with 'NONE'."
                         ),
@@ -1591,12 +1592,15 @@ class FactChecker:
                         "text": (
                             f"Analyze this image and fact-check up to {max_claims} substantive factual claims visible in it. "
                             "The image may be a Reddit/social-media image, meme, screenshot, chart, stock card, headline, or news card. "
-                            "Use OCR on visible text, labels, numbers, and charts. Ignore browser UI, app chrome, usernames, profile pictures, "
-                            "timestamps, engagement counts, and share buttons unless they are part of the factual claim. "
+                            "Use OCR to extract visible text, labels, quotes, numbers, and charts. "
+                            "CRITICAL: DO NOT just describe objects in the image (e.g., 'The image displays a flag'). "
+                            "Focus exclusively on extracting and fact-checking assertions, statements, text-based claims, or statistics. "
+                            "Ignore browser UI, app chrome, usernames, profile pictures, timestamps, engagement counts, and share buttons. "
+                            "Use your extensive internal knowledge base to thoroughly verify these claims and provide external canonical sources. "
                             "Return ONLY JSON with this exact shape: "
                             '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE",'
                             '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
-                            "Sources must be full http(s) URLs when available. If there are no factual claims, return {\"claims\":[]}."
+                            "Sources must be full http(s) URLs when available. If there are no factual assertions or text claims to check, return {\"claims\":[]}."
                         ),
                     }
                 ],
@@ -1801,7 +1805,7 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     results: List[Dict[str, Any]] = []
     text_analysis_error = ""
 
-    should_analyze_text = bool(text) and (_has_substantial_article_text(text) or not image_urls)
+    should_analyze_text = bool(text)
     if should_analyze_text:
         results.extend(checker.fact_check_text_claims(text))
         text_analysis_error = checker.last_text_error
