@@ -1146,7 +1146,7 @@ class FactChecker:
             generation_config["response_mime_type"] = "application/json"
 
         for model_index, model in enumerate(models):
-            api_url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={self.api_key}"
+            api_url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={self.gemini_api_key}"
             native_payload = {"contents": contents}
             if generation_config:
                 native_payload["generationConfig"] = generation_config
@@ -1484,7 +1484,9 @@ class FactChecker:
         }
         response = self._post_api(payload)
         if response is None or response.status_code != 200:
-            self.last_text_error = _extract_error_message(response)
+            error_msg = _extract_error_message(response)
+            print(f"DEBUG: Gemini API Error ({response.status_code if response else 'None'}): {error_msg}")
+            self.last_text_error = error_msg
             return []
         try:
             content = response.json()["choices"][0]["message"]["content"]
