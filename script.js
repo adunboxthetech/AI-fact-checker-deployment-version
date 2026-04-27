@@ -757,12 +757,12 @@ class MysticalEngine {
                 centeredUv.x *= iResolution.x/iResolution.y;
                 
                 float baseTime = iTime * 0.2;
-                float rotAngle = loadingState * iTime * 0.8;
+                float rotAngle = iTime * 0.8; // Always rotate to prevent phase jumps
                 mat2 rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
                 
                 vec2 ruv = mix(uv, centeredUv * rot + vec2(0.5), loadingState);
                 
-                float t = baseTime + loadingState * iTime * 0.5;
+                float t = iTime * 0.3; // Constant time scale to prevent phase jumps
                 
                 // Multilayer noise
                 float n1 = snoise(ruv * 1.5 + vec2(t, t * 0.5));
