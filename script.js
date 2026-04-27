@@ -19,6 +19,7 @@ class FactCheckerApp {
         this.imagePreview = document.getElementById('imagePreview');
         this.ambientGradient = document.getElementById('ambientGradient');
         this.welcomeSection = document.getElementById('welcomeSection');
+        this.bottomArea = document.querySelector('.bottom-area');
         this.analyzeImageBtn = null;
     }
 
@@ -244,6 +245,10 @@ class FactCheckerApp {
         this.textInput.style.height = 'auto';
         this.hideResults();
         if (this.welcomeSection) this.welcomeSection.classList.remove('hidden');
+        // Exit results-mode: restore footer
+        if (this.bottomArea) this.bottomArea.classList.remove('results-mode');
+        // Restore clear button to icon-only
+        this.clearBtn.innerHTML = '<i class="fas fa-eraser"></i>';
         
         if (typeof mysticalEngine !== 'undefined') {
             mysticalEngine.resetInput();
@@ -256,12 +261,23 @@ class FactCheckerApp {
         this.loadingSection.classList.remove('hidden');
         this.resultsSection.classList.add('hidden');
         this.factCheckBtn.disabled = true;
+        // Start cloud morph animation
+        if (typeof mysticalEngine !== 'undefined') {
+            mysticalEngine.startCloudLoading();
+        }
     }
 
     hideLoading() {
-        this.loadingSection.classList.add('hidden');
         this.factCheckBtn.disabled = false;
         this.updateFactCheckButtonState();
+        // Disperse cloud then hide loading section
+        if (typeof mysticalEngine !== 'undefined') {
+            mysticalEngine.disperseCloud(() => {
+                this.loadingSection.classList.add('hidden');
+            });
+        } else {
+            this.loadingSection.classList.add('hidden');
+        }
     }
 
     hideResults() {
@@ -381,6 +397,10 @@ class FactCheckerApp {
         if (typeof mysticalEngine !== 'undefined') {
             mysticalEngine.triggerReveal();
         }
+        
+        // Enter results-mode: centered clear button, hide attach/send
+        if (this.bottomArea) this.bottomArea.classList.add('results-mode');
+        this.clearBtn.innerHTML = '<i class="fas fa-eraser"></i><span class="clear-label">New Check</span>';
         
         this.resultsSection.scrollIntoView({ behavior: 'smooth' });
     }
@@ -940,10 +960,137 @@ class MysticalEngine {
         }
     }
     
+    // --- CLOUD LOADING ANIMATION ---
+    startCloudLoading() {
+        this.cloudCanvas = document.getElementById('cloudMorphCanvas');
+        this.thoughtContainer = document.getElementById('thoughtBubbles');
+        this.cloudOverlay = document.getElementById('cloudLoadingOverlay');
+        if (!this.cloudCanvas || !this.thoughtContainer) return;
+
+        this.cloudOverlay.classList.remove('dispersing');
+        const cCtx = this.cloudCanvas.getContext('2d');
+        const W = 340, H = 280;
+        this.cloudCanvas.width = W * 2;
+        this.cloudCanvas.height = H * 2;
+        this.cloudCanvas.style.width = W + 'px';
+        this.cloudCanvas.style.height = H + 'px';
+
+        this.cloudRunning = true;
+        let t = 0;
+        const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+
+        const drawCloud = () => {
+            if (!this.cloudRunning) return;
+            t += 0.012;
+            cCtx.clearRect(0, 0, W * 2, H * 2);
+            const cx = W, cy = H;
+            // Draw layered blobs
+            for (let layer = 3; layer >= 0; layer--) {
+                cCtx.beginPath();
+                const points = 80;
+                for (let i = 0; i <= points; i++) {
+                    const angle = (i / points) * Math.PI * 2;
+                    const baseR = (110 + layer * 20) * 2;
+                    const noise = Math.sin(angle * 3 + t * 2 + layer) * 18 +
+                                  Math.cos(angle * 5 - t * 1.5 + layer * 2) * 12 +
+                                  Math.sin(angle * 7 + t * 3) * 6;
+                    const r = baseR + noise * 2;
+                    const x = cx + Math.cos(angle) * r;
+                    const y = cy + Math.sin(angle) * r * 0.75;
+                    if (i === 0) cCtx.moveTo(x, y);
+                    else cCtx.lineTo(x, y);
+                }
+                cCtx.closePath();
+
+                const grad = cCtx.createRadialGradient(cx, cy, 0, cx, cy, (160 + layer * 20) * 2);
+                if (isDark()) {
+                    const alphas = [0.5, 0.35, 0.2, 0.1];
+                    grad.addColorStop(0, `rgba(129,140,248,${alphas[layer]})`);
+                    grad.addColorStop(0.5, `rgba(168,85,247,${alphas[layer] * 0.7})`);
+                    grad.addColorStop(1, `rgba(59,130,246,0)`);
+                } else {
+                    const alphas = [0.6, 0.4, 0.25, 0.12];
+                    grad.addColorStop(0, `rgba(99,102,241,${alphas[layer]})`);
+                    grad.addColorStop(0.5, `rgba(168,85,247,${alphas[layer] * 0.7})`);
+                    grad.addColorStop(1, `rgba(139,92,246,0)`);
+                }
+                cCtx.fillStyle = grad;
+                cCtx.filter = `blur(${6 + layer * 4}px)`;
+                cCtx.fill();
+                cCtx.filter = 'none';
+            }
+            requestAnimationFrame(drawCloud);
+        };
+        drawCloud();
+
+        // Thought bubble cycling
+        this.bubbleMessages = [
+            'Analyzing claims...',
+            'Cross-referencing sources...',
+            'Evaluating evidence...',
+            'Verifying credibility...',
+            'Checking global databases...',
+            'Comparing perspectives...'
+        ];
+        this.bubblePositions = [
+            { top: '5%', left: '55%', cls: 'pos-top-right' },
+            { top: '25%', right: '2%', cls: 'pos-right' },
+            { bottom: '20%', right: '5%', cls: 'pos-bottom-right' },
+            { bottom: '5%', left: '10%', cls: 'pos-bottom-left' },
+            { top: '30%', left: '2%', cls: 'pos-left' },
+            { top: '2%', left: '10%', cls: 'pos-top-left' }
+        ];
+        this.bubbleIndex = 0;
+        this.thoughtContainer.innerHTML = '';
+        this._spawnBubble();
+        this.bubbleInterval = setInterval(() => {
+            if (!this.cloudRunning) return;
+            this._spawnBubble();
+        }, 2200);
+    }
+
+    _spawnBubble() {
+        if (!this.thoughtContainer) return;
+        // Fade previous bubbles
+        const old = this.thoughtContainer.querySelectorAll('.thought-bubble:not(.fading)');
+        old.forEach(b => { b.classList.add('fading'); setTimeout(() => b.remove(), 400); });
+
+        const msg = this.bubbleMessages[this.bubbleIndex % this.bubbleMessages.length];
+        const pos = this.bubblePositions[this.bubbleIndex % this.bubblePositions.length];
+        this.bubbleIndex++;
+
+        const bubble = document.createElement('div');
+        bubble.className = `thought-bubble ${pos.cls}`;
+        bubble.textContent = msg;
+        if (pos.top) bubble.style.top = pos.top;
+        if (pos.bottom) bubble.style.bottom = pos.bottom;
+        if (pos.left) bubble.style.left = pos.left;
+        if (pos.right) bubble.style.right = pos.right;
+        this.thoughtContainer.appendChild(bubble);
+    }
+
+    disperseCloud(onComplete) {
+        this.cloudRunning = false;
+        if (this.bubbleInterval) { clearInterval(this.bubbleInterval); this.bubbleInterval = null; }
+        // Fade out bubbles
+        if (this.thoughtContainer) {
+            this.thoughtContainer.querySelectorAll('.thought-bubble').forEach(b => {
+                b.classList.add('fading');
+                setTimeout(() => b.remove(), 400);
+            });
+        }
+        // Trigger disperse CSS animation
+        if (this.cloudOverlay) {
+            this.cloudOverlay.classList.add('dispersing');
+        }
+        setTimeout(() => {
+            if (onComplete) onComplete();
+        }, 1600);
+    }
+
     triggerReveal() {
         this.setCloudIntensity(false);
         if (this.resultsSection) {
-            // Remove class to reset animation, force reflow, add class back
             this.resultsSection.classList.remove('revealing');
             void this.resultsSection.offsetWidth;
             this.resultsSection.classList.add('revealing');

@@ -63,8 +63,12 @@
         </div>
 
         <div id="loadingSection" class="loading-section hidden">
-          <div class="orb-spinner"></div>
-          <p class="loading-text">Analyzing claims across global sources...</p>
+          <div class="cloud-loading-overlay" id="cloudLoadingOverlay">
+            <canvas id="cloudMorphCanvas" class="cloud-morph-canvas"></canvas>
+            <div class="thought-bubbles-container" id="thoughtBubbles">
+              <!-- Thought bubbles injected by JS -->
+            </div>
+          </div>
         </div>
 
         <div id="resultsSection" class="results-section hidden">
