@@ -243,6 +243,7 @@ class FactCheckerApp {
     handleClear() {
         this.textInput.value = '';
         this.textInput.style.height = 'auto';
+        this.textInput.style.color = ''; // Restore text color after magical transition
         this.hideResults();
         if (this.welcomeSection) this.welcomeSection.classList.remove('hidden');
         // Exit results-mode: restore footer
@@ -873,138 +874,101 @@ class MysticalEngine {
         this.setCloudIntensity(true); // Intensify cloud during processing
         
         const rect = textElement.getBoundingClientRect();
-        const computedStyle = window.getComputedStyle(textElement);
+        const computed = window.getComputedStyle(textElement);
         
-        // Draw the text onto a temporary canvas to get pixels
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = rect.width;
-        tempCanvas.height = rect.height;
-        const tCtx = tempCanvas.getContext('2d');
+        // Create a ghost div to hold the characters
+        const ghost = document.createElement('div');
+        document.body.appendChild(ghost);
         
-        tCtx.font = computedStyle.font;
-        const currentTheme = document.documentElement.getAttribute('data-theme');
-        this.textColor = (currentTheme === 'light' || !currentTheme) ? '#000000' : '#ffffff';
-        tCtx.fillStyle = this.textColor; 
-        tCtx.textBaseline = 'top';
+        // Match styles precisely
+        ghost.style.position = 'absolute';
+        ghost.style.left = rect.left + 'px';
+        ghost.style.top = rect.top + 'px';
+        ghost.style.width = rect.width + 'px';
+        ghost.style.height = rect.height + 'px';
+        ghost.style.fontFamily = computed.fontFamily;
+        ghost.style.fontSize = computed.fontSize;
+        ghost.style.fontWeight = computed.fontWeight;
+        ghost.style.lineHeight = computed.lineHeight;
+        ghost.style.letterSpacing = computed.letterSpacing;
+        ghost.style.padding = computed.padding;
+        ghost.style.boxSizing = computed.boxSizing;
+        ghost.style.whiteSpace = 'pre-wrap';
+        ghost.style.wordWrap = 'break-word';
+        ghost.style.color = computed.color;
+        ghost.style.pointerEvents = 'none';
+        ghost.style.zIndex = '1000';
         
-        // Simple word wrapping for drawing
-        const words = textElement.value.split(' ');
-        let line = '';
-        let y = parseInt(computedStyle.paddingTop) || 0;
-        const x = parseInt(computedStyle.paddingLeft) || 0;
-        const lineHeight = parseInt(computedStyle.lineHeight) || 24;
+        const text = textElement.value;
+        textElement.style.color = 'transparent'; // hide real text
         
-        for(let n = 0; n < words.length; n++) {
-            let testLine = line + words[n] + ' ';
-            let metrics = tCtx.measureText(testLine);
-            let testWidth = metrics.width;
-            if (testWidth > rect.width - x*2 && n > 0) {
-                tCtx.fillText(line, x, y);
-                line = words[n] + ' ';
-                y += lineHeight;
-            } else {
-                line = testLine;
-            }
-        }
-        tCtx.fillText(line, x, y);
-        
-        // Extract pixels
-        const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
-        this.particles = [];
-        
-        const offsetX = rect.left;
-        const offsetY = rect.top;
-        
-        // Create particles (sampling every 2nd pixel for performance)
-        for (let py = 0; py < tempCanvas.height; py += 2) {
-            for (let px = 0; px < tempCanvas.width; px += 2) {
-                const index = (py * tempCanvas.width + px) * 4;
-                const alpha = imgData[index + 3];
-                if (alpha > 128) {
-                    this.particles.push({
-                        x: offsetX + px,
-                        y: offsetY + py,
-                        vx: (Math.random() - 0.5) * 2.5,
-                        vy: (Math.random() * -3) - 1.5, // Move up initially
-                        life: 1.0,
-                        decay: Math.random() * 0.008 + 0.004, // Slower decay for longer life
-                        size: Math.random() * 1.5 + 0.5
-                    });
-                }
-            }
+        // Wrap each character in a span
+        const spans = [];
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const span = document.createElement('span');
+            span.innerHTML = char === ' ' ? '&nbsp;' : char;
+            span.style.display = 'inline-block';
+            span.style.transition = 'transform 1.8s cubic-bezier(0.4, 0, 0.2, 1), opacity 1.8s ease, filter 1.8s ease';
+            ghost.appendChild(span);
+            spans.push(span);
         }
         
-        this.animatingParticles = true;
-        this.animateParticles();
+        // Force reflow to calculate positions
+        ghost.getBoundingClientRect();
+        
+        // Record starting absolute positions
+        const positions = spans.map(span => {
+            const r = span.getBoundingClientRect();
+            return { left: r.left, top: r.top, width: r.width, height: r.height };
+        });
+        
+        // Switch to fixed positioning for independent animation
+        spans.forEach((span, i) => {
+            span.style.position = 'fixed';
+            span.style.left = positions[i].left + 'px';
+            span.style.top = positions[i].top + 'px';
+            span.style.margin = '0';
+        });
+        
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        
+        // Animate each character
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                spans.forEach((span, i) => {
+                    const dx = cx - positions[i].left - (positions[i].width / 2);
+                    const dy = cy - positions[i].top - (positions[i].height / 2);
+                    
+                    // Wave effect: slight delay based on index
+                    const delay = i * 15; 
+                    span.style.transitionDelay = `${delay}ms`;
+                    
+                    // Calm, magical scatter: translate to center, scale down slightly, slight rotation
+                    const rX = (Math.random() - 0.5) * 40;
+                    const rY = (Math.random() - 0.5) * 40;
+                    const rRot = (Math.random() - 0.5) * 60;
+                    
+                    span.style.transform = `translate(${dx + rX}px, ${dy + rY}px) scale(0.3) rotate(${rRot}deg)`;
+                    span.style.opacity = '0';
+                    span.style.filter = 'blur(3px)';
+                });
+            });
+        });
+        
+        // Cleanup
+        setTimeout(() => {
+            ghost.remove();
+        }, 2000 + text.length * 15);
         
         // Allow API call to proceed
         if (onComplete) setTimeout(onComplete, 500); 
     }
     
     animateParticles() {
-        if (!this.animatingParticles) return;
-        
-        this.ctx.clearRect(0, 0, this.particleCanvas.width, this.particleCanvas.height);
-        
-        let activeParticles = 0;
-        this.ctx.fillStyle = this.textColor || '#ffffff';
-        this.ctx.beginPath();
-        
-        const cx = window.innerWidth / 2;
-        const cy = window.innerHeight / 2;
-        
-        for (let i = 0; i < this.particles.length; i++) {
-            let p = this.particles[i];
-            if (p.life <= 0) continue;
-            
-            activeParticles++;
-            
-            // Calculate vector to center
-            const dx = cx - p.x;
-            const dy = cy - p.y;
-            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-            
-            // Attraction to center (gravity increases as life decays)
-            const force = 0.02 + (1.0 - p.life) * 0.1;
-            p.vx += (dx / dist) * force * 8;
-            p.vy += (dy / dist) * force * 8;
-            
-            // Swirling force around center
-            const swirlForce = 0.4;
-            p.vx += (-dy / dist) * swirlForce;
-            p.vy += (dx / dist) * swirlForce;
-            
-            p.x += p.vx;
-            p.y += p.vy;
-            
-            // Add some damping
-            p.vx *= 0.94;
-            p.vy *= 0.94;
-            
-            // Chaotic "molecular" noise
-            p.vx += (Math.random() - 0.5) * 1.5;
-            p.vy += (Math.random() - 0.5) * 1.5;
-            
-            p.life -= p.decay;
-            
-            // Fade out based on distance to center and life (capped for a calm, faded look)
-            const alpha = Math.min(0.4, p.life * (dist > 30 ? 0.6 : (dist / 30.0) * 0.6));
-            
-            if (alpha > 0) {
-                this.ctx.globalAlpha = alpha;
-                this.ctx.moveTo(p.x, p.y);
-                this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-            }
-        }
-        
-        this.ctx.fill();
-        this.ctx.globalAlpha = 1.0;
-        
-        if (activeParticles > 0) {
-            requestAnimationFrame(() => this.animateParticles());
-        } else {
-            this.animatingParticles = false;
-        }
+        // Obsolete: canvas particle engine is replaced by DOM character animation
+        return;
     }
     
     // --- CLOUD LOADING ANIMATION ---
