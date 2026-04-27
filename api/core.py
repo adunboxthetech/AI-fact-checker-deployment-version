@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from readability import Document
 
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_PRIMARY_MODEL = "gemini-2.5-flash-lite"
 GEMINI_FALLBACK_MODELS = ["gemini-2.5-flash"]
 
@@ -1046,26 +1046,91 @@ class FactChecker:
         if "ENTER_YOUR_GEMINI" in self.api_key.upper():
             raise ValueError("GEMINI_API_KEY is still set to the placeholder value")
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "Accept": "application/json",
         }
         self.last_image_error = ""
         self.last_text_error = ""
 
+    @staticmethod
+    def _translate_messages_to_contents(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Convert OpenAI-style messages to native Gemini 'contents' format."""
+        contents = []
+        for msg in messages:
+            role = "user" if msg.get("role") in ("user", "system") else "model"
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                contents.append({"role": role, "parts": [{"text": content}]})
+            elif isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            parts.append({"text": item.get("text", "")})
+                        elif item.get("type") == "image_url":
+                            image_url = item.get("image_url", {}).get("url", "")
+                            if image_url.startswith("data:"):
+                                # Parse data URL: data:mime;base64,DATA
+                                match = re.match(r"data:([^;]+);base64,(.+)", image_url, re.DOTALL)
+                                if match:
+                                    mime_type = match.group(1)
+                                    b64_data = match.group(2)
+                                    parts.append({"inline_data": {"mime_type": mime_type, "data": b64_data}})
+                            else:
+                                # Remote URL — use file_data for Gemini
+                                parts.append({"file_data": {"mime_type": "image/jpeg", "file_uri": image_url}})
+                if parts:
+                    contents.append({"role": role, "parts": parts})
+        return contents
+
+    @staticmethod
+    def _translate_native_response(body: str) -> str:
+        """Convert native Gemini response to OpenAI-compatible format for downstream parsing."""
+        try:
+            data = json.loads(body)
+            candidates = data.get("candidates", [])
+            if not candidates:
+                return body
+            content = candidates[0].get("content", {})
+            parts = content.get("parts", [])
+            text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            # Return in OpenAI-compatible format so all downstream parsing works unchanged
+            return json.dumps({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": text
+                    }
+                }]
+            })
+        except Exception:
+            return body
+
     def _post_gemini(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS) -> Optional[GeminiResponse]:
-        """Retry transient upstream errors with model fallback on ANY non-200."""
+        """Call native Gemini API with retry and model fallback on ANY non-200."""
         last_response: Optional[GeminiResponse] = None
         last_error: Optional[str] = None
         models = _models_for_payload(payload)
+
+        # Translate OpenAI-style messages to native Gemini contents
+        messages = payload.get("messages", [])
+        contents = self._translate_messages_to_contents(messages)
+
+        # Build generation config
+        generation_config: Dict[str, Any] = {}
+        if payload.get("response_format", {}).get("type") == "json_object":
+            generation_config["response_mime_type"] = "application/json"
+
         for model_index, model in enumerate(models):
-            model_payload = {**payload, "model": model}
-            encoded_payload = json.dumps(model_payload).encode("utf-8")
+            api_url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={self.api_key}"
+            native_payload = {"contents": contents}
+            if generation_config:
+                native_payload["generationConfig"] = generation_config
+            encoded_payload = json.dumps(native_payload).encode("utf-8")
             model_failed = False
             for attempt in range(retries):
                 try:
                     req = urllib_request.Request(
-                        GEMINI_URL,
+                        api_url,
                         data=encoded_payload,
                         headers=self.headers,
                         method="POST",
@@ -1073,7 +1138,9 @@ class FactChecker:
                     with urllib_request.urlopen(req, timeout=45) as upstream:
                         body = upstream.read().decode("utf-8", errors="replace")
                         status_code = int(getattr(upstream, "status", 200))
-                        response = GeminiResponse(status_code=status_code, body=body, headers=dict(upstream.headers))
+                        # Translate native response to OpenAI-compatible format
+                        translated_body = self._translate_native_response(body)
+                        response = GeminiResponse(status_code=status_code, body=translated_body, headers=dict(upstream.headers))
                 except urllib_error.HTTPError as err:
                     body = ""
                     try:
