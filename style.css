@@ -51,6 +51,7 @@
 
 html, body {
   height: 100%;
+  height: 100dvh; /* Dynamic viewport height for mobile browsers */
   width: 100%;
   overflow: hidden; /* Prevent body scroll, scroll inside main */
 }
@@ -111,6 +112,7 @@ h1, h2, h3, h4, h5, .app-title {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* Dynamic viewport height for mobile browsers */
   position: relative;
   z-index: 10;
 }
@@ -228,6 +230,7 @@ h1, h2, h3, h4, h5, .app-title {
 /* Bottom Area (Prompt) */
 .bottom-area {
   padding: 0 24px 32px;
+  padding-bottom: calc(32px + env(safe-area-inset-bottom, 0px));
   flex-shrink: 0;
 }
 
@@ -691,9 +694,14 @@ h1, h2, h3, h4, h5, .app-title {
 
 /* Responsive */
 @media (max-width: 600px) {
-  .welcome-section h2 { font-size: 2rem; }
+  .welcome-section h2 { font-size: 1.75rem; }
+  .welcome-section { padding-bottom: 4vh; }
   .claim-result { padding: 16px; }
+  .bottom-area { padding: 0 16px 16px; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
   .bottom-area.results-mode .icon-action-btn { padding: 12px 32px; font-size: 0.95rem; }
+  .header { padding: 14px 16px; }
+  .content-container { padding-top: 2vh; padding-bottom: 20px; }
+  .hint { margin-top: 8px; font-size: 0.7rem; }
 }
 
 /* Force interactive elements to be above everything and clickable */
