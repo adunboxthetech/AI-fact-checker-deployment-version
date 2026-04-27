@@ -924,10 +924,10 @@ class MysticalEngine {
                     this.particles.push({
                         x: offsetX + px,
                         y: offsetY + py,
-                        vx: (Math.random() - 0.5) * 2,
-                        vy: (Math.random() * -3) - 1, // Move up
+                        vx: (Math.random() - 0.5) * 4,
+                        vy: (Math.random() * -4) - 2, // Move up initially
                         life: 1.0,
-                        decay: Math.random() * 0.015 + 0.01,
+                        decay: Math.random() * 0.008 + 0.004, // Slower decay for longer life
                         size: Math.random() * 1.5 + 0.5
                     });
                 }
@@ -950,20 +950,51 @@ class MysticalEngine {
         this.ctx.fillStyle = this.textColor || '#ffffff';
         this.ctx.beginPath();
         
+        const cx = window.innerWidth / 2;
+        const cy = window.innerHeight / 2;
+        
         for (let i = 0; i < this.particles.length; i++) {
             let p = this.particles[i];
             if (p.life <= 0) continue;
             
             activeParticles++;
+            
+            // Calculate vector to center
+            const dx = cx - p.x;
+            const dy = cy - p.y;
+            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+            
+            // Attraction to center (gravity increases as life decays)
+            const force = 0.05 + (1.0 - p.life) * 0.2;
+            p.vx += (dx / dist) * force * 15;
+            p.vy += (dy / dist) * force * 15;
+            
+            // Swirling force around center
+            const swirlForce = 1.2;
+            p.vx += (-dy / dist) * swirlForce;
+            p.vy += (dx / dist) * swirlForce;
+            
             p.x += p.vx;
             p.y += p.vy;
-            p.vx += (Math.random() - 0.5) * 0.5; // Swirl
-            p.vy -= 0.05; // Accelerate upwards
+            
+            // Add some damping
+            p.vx *= 0.92;
+            p.vy *= 0.92;
+            
+            // Swirl noise
+            p.vx += (Math.random() - 0.5) * 0.8;
+            p.vy += (Math.random() - 0.5) * 0.8;
+            
             p.life -= p.decay;
             
-            this.ctx.globalAlpha = p.life;
-            this.ctx.moveTo(p.x, p.y);
-            this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            // Fade out based on distance to center and life
+            const alpha = Math.min(1.0, p.life * (dist > 15 ? 1.0 : dist / 15.0));
+            
+            if (alpha > 0) {
+                this.ctx.globalAlpha = alpha;
+                this.ctx.moveTo(p.x, p.y);
+                this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            }
         }
         
         this.ctx.fill();
