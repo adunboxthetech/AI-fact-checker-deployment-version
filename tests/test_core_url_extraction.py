@@ -107,6 +107,12 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(result["image_urls"], ["https://cdn.example.test/media?id=123"])
         self.assertTrue(result["image_detection_info"]["has_images"])
 
+    def test_invalid_hostname_without_dot_is_rejected(self):
+        self.assertFalse(core.is_valid_url("https://not-a-url"))
+
+    def test_private_url_is_rejected(self):
+        self.assertFalse(core.is_valid_url("http://127.0.0.1:5000/health"))
+
     def test_filter_image_urls_dedupes_preview_variants(self):
         images = core._filter_image_urls([
             "https://i.redd.it/example.jpeg",
@@ -138,9 +144,9 @@ class UrlExtractionTests(unittest.TestCase):
         self.assertEqual(core._extract_error_message(response), "Quota exceeded. Retry later.")
 
     def test_retry_delay_uses_exponential_backoff(self):
-        self.assertEqual(core._retry_delay_seconds(0), 2.0)
-        self.assertEqual(core._retry_delay_seconds(1), 4.0)
-        self.assertEqual(core._retry_delay_seconds(2), 8.0)
+        self.assertEqual(core._retry_delay_seconds(0), 1.0)
+        self.assertEqual(core._retry_delay_seconds(1), 2.0)
+        self.assertEqual(core._retry_delay_seconds(2), 4.0)
 
     def test_retry_after_parses_gemini_retry_delay(self):
         response = core.GeminiResponse(
@@ -162,7 +168,39 @@ class UrlExtractionTests(unittest.TestCase):
         models = core._models_for_payload({"model": core.GEMINI_PRIMARY_MODEL})
 
         self.assertEqual(models[0], core.GEMINI_PRIMARY_MODEL)
-        self.assertIn("gemini-2.5-flash-lite", models)
+        self.assertIn("gemini-2.0-flash", models)
+
+    def test_grounding_redirect_sources_fall_back_to_titles(self):
+        response = {
+            "candidates": [{
+                "content": {"parts": [{"text": "{}"}]},
+                "groundingMetadata": {
+                    "groundingChunks": [
+                        {"web": {
+                            "uri": "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc",
+                            "title": "bbc.com",
+                        }},
+                        {"web": {
+                            "uri": "https://example.test/story?utm_source=x#section",
+                            "title": "Example",
+                        }},
+                    ]
+                },
+            }]
+        }
+
+        self.assertEqual(
+            core._extract_grounding_sources(response),
+            ["https://bbc.com", "https://example.test/story"],
+        )
+
+    def test_clean_sources_drops_google_grounding_redirects(self):
+        cleaned = core._clean_sources(
+            ["https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc"],
+            ["https://reuters.com"],
+        )
+
+        self.assertEqual(cleaned, ["https://reuters.com"])
 
     def test_parse_json_block_handles_fenced_array(self):
         parsed = core._try_parse_json_block(

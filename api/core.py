@@ -1,4 +1,5 @@
 import base64
+import ipaddress
 import json
 import os
 import re
@@ -23,8 +24,8 @@ def _get_env_var_insensitive(key: str) -> Optional[str]:
 
 GEMINI_API_KEY = _get_env_var_insensitive('GEMINI_API_KEY') or _get_env_var_insensitive('GOOGLE_API_KEY')
 GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_PRIMARY_MODEL = "gemini-2.0-flash"
-GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite", "gemini-2.5-flash"]
+GEMINI_PRIMARY_MODEL = "gemini-2.0-flash-lite"
+GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash"]
 
 # Groq API configuration — primary provider (OpenAI-compatible, higher free-tier RPM)
 GROQ_API_KEY = _get_env_var_insensitive('GROQ_API_KEY')
@@ -80,14 +81,15 @@ MAX_IMAGE_CLAIMS = 4
 MAX_IMAGES_TO_ANALYZE = 2
 MAX_CONCURRENT_IMAGE_REQUESTS = 1
 MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
-GEMINI_RETRY_ATTEMPTS = 2
-GEMINI_INITIAL_RETRY_DELAY_SECONDS = 1.5
+GEMINI_RETRY_ATTEMPTS = 1
+GEMINI_INITIAL_RETRY_DELAY_SECONDS = 1.0
 GEMINI_BACKOFF_MULTIPLIER = 2.0
-MAX_GEMINI_RETRY_DELAY_SECONDS = 8.0
+MAX_GEMINI_RETRY_DELAY_SECONDS = 4.0
 GEMINI_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 GEMINI_INTER_REQUEST_DELAY = 0.5  # seconds between API calls
 GROQ_INTER_REQUEST_DELAY = 0.3  # Groq has higher RPM limits than Gemini
 GROQ_MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024  # Groq limits base64 images to 4MB
+UPSTREAM_TIMEOUT_SECONDS = 25
 
 
 @dataclass
@@ -161,16 +163,105 @@ def _coerce_confidence(value: Any, default: int = 75) -> int:
     return max(0, min(100, value))
 
 
-def _clean_sources(value: Any) -> List[str]:
+def _is_google_grounding_redirect(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    host = parsed.netloc.lower()
+    return host.endswith("vertexaisearch.cloud.google.com") or host.endswith("googleusercontent.com")
+
+
+def _source_url_from_title(title: Any) -> Optional[str]:
+    if not isinstance(title, str):
+        return None
+    title = title.strip()
+    if not title:
+        return None
+    match = re.search(r"([a-z0-9-]+(?:\.[a-z0-9-]+)+)", title, flags=re.I)
+    if not match:
+        return None
+    host = match.group(1).lower()
+    if host.endswith(".") or "." not in host:
+        return None
+    return f"https://{host}"
+
+
+def _normalize_source_url(url: str) -> str:
+    url = (url or "").strip().strip(".,;)]}\"'")
+    if not re.match(r"^https?://", url, flags=re.I):
+        return ""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return ""
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return ""
+    query_pairs = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.lower().startswith("utm_")
+        and key.lower() not in {"fbclid", "gclid", "igshid", "mc_cid", "mc_eid"}
+    ]
+    return urlunparse(parsed._replace(query=urlencode(query_pairs, doseq=True), fragment=""))
+
+
+def _source_key(url: str) -> str:
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    return f"{parsed.netloc.lower()}{path.lower()}"
+
+
+def _dedupe_sources(urls: List[str], limit: int = 5) -> List[str]:
+    seen = set()
+    cleaned: List[str] = []
+    for url in urls:
+        normalized = _normalize_source_url(url)
+        if not normalized or _is_google_grounding_redirect(normalized):
+            continue
+        key = _source_key(normalized)
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(normalized)
+        if len(cleaned) >= limit:
+            break
+    return cleaned
+
+
+def _extract_grounding_sources(response_data: Dict[str, Any]) -> List[str]:
+    candidates = response_data.get("candidates", [])
+    if not candidates or not isinstance(candidates[0], dict):
+        return []
+    metadata = candidates[0].get("groundingMetadata") or candidates[0].get("grounding_metadata") or {}
+    chunks = metadata.get("groundingChunks") or metadata.get("grounding_chunks") or []
+    urls: List[str] = []
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        web = chunk.get("web") if isinstance(chunk.get("web"), dict) else {}
+        uri = web.get("uri") or web.get("url") or ""
+        title_url = _source_url_from_title(web.get("title"))
+        if isinstance(uri, str) and uri:
+            normalized = _normalize_source_url(uri)
+            if normalized and not _is_google_grounding_redirect(normalized):
+                urls.append(normalized)
+                continue
+        if title_url:
+            urls.append(title_url)
+    return _dedupe_sources(urls)
+
+
+def _clean_sources(value: Any, fallback: Optional[List[str]] = None) -> List[str]:
+    urls: List[str] = []
     if isinstance(value, str):
         value = re.findall(r"https?://[^\s)\]}]+", value, flags=re.I)
-    if not isinstance(value, list):
-        return []
-    return [
-        source.strip()
-        for source in value
-        if isinstance(source, str) and re.match(r"^https?://", source.strip(), flags=re.I)
-    ][:5]
+    if isinstance(value, list):
+        urls.extend(source for source in value if isinstance(source, str))
+    cleaned = _dedupe_sources(urls)
+    if cleaned:
+        return cleaned
+    return _dedupe_sources(fallback or [])
 
 
 def _retry_delay_seconds(attempt: int) -> float:
@@ -229,7 +320,19 @@ def normalize_url(url: str) -> str:
 def is_valid_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
-        return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return False
+        hostname = parsed.hostname or ""
+        if not hostname or any(ch.isspace() for ch in hostname):
+            return False
+        try:
+            ip = ipaddress.ip_address(hostname)
+            return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+        except ValueError:
+            pass
+        if hostname.lower() == "localhost" or "." not in hostname:
+            return False
+        return True
     except Exception:
         return False
 
@@ -1118,6 +1221,7 @@ class FactChecker:
             content = candidates[0].get("content", {})
             parts = content.get("parts", [])
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
+            grounding_sources = _extract_grounding_sources(data)
             # Return in OpenAI-compatible format so all downstream parsing works unchanged
             return json.dumps({
                 "choices": [{
@@ -1125,7 +1229,8 @@ class FactChecker:
                         "role": "assistant",
                         "content": text
                     }
-                }]
+                }],
+                "grounding_sources": grounding_sources,
             })
         except Exception:
             return body
@@ -1168,7 +1273,7 @@ class FactChecker:
                         headers=self.headers,
                         method="POST",
                     )
-                    with urllib_request.urlopen(req, timeout=45) as upstream:
+                    with urllib_request.urlopen(req, timeout=UPSTREAM_TIMEOUT_SECONDS) as upstream:
                         body = upstream.read().decode("utf-8", errors="replace")
                         status_code = int(getattr(upstream, "status", 200))
                         # Translate native response to OpenAI-compatible format
@@ -1247,7 +1352,7 @@ class FactChecker:
                         headers=headers,
                         method="POST",
                     )
-                    with urllib_request.urlopen(req, timeout=45) as upstream:
+                    with urllib_request.urlopen(req, timeout=UPSTREAM_TIMEOUT_SECONDS) as upstream:
                         body = upstream.read().decode("utf-8", errors="replace")
                         status_code = int(getattr(upstream, "status", 200))
                         # Groq responses are already in OpenAI format — no translation needed
@@ -1427,7 +1532,9 @@ class FactChecker:
             }
 
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            response_json = response.json()
+            content = response_json["choices"][0]["message"]["content"]
+            grounding_sources = _clean_sources(response_json.get("grounding_sources", []))
         except Exception:
             return {
                 "verdict": "ERROR",
@@ -1444,8 +1551,7 @@ class FactChecker:
                         urls.append(item.strip())
             if not urls and isinstance(parsed.get("explanation"), str):
                 urls = re.findall(r"https?://[^\s)\]}]+", parsed["explanation"], flags=re.I)
-            if urls:
-                parsed["sources"] = urls[:5]
+            parsed["sources"] = _clean_sources(urls, grounding_sources)
             conf_val = parsed.get("confidence", 75)
             if isinstance(conf_val, str):
                 conf_val = re.sub(r"[^\d]", "", conf_val)
@@ -1467,7 +1573,7 @@ class FactChecker:
             "verdict": "ANALYSIS COMPLETE",
             "confidence": 75,
             "explanation": content,
-            "sources": urls[:5] if urls else ["Google Gemini Analysis"],
+            "sources": _clean_sources(urls, grounding_sources),
         }
 
     def fact_check_text_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[Dict[str, Any]]:
@@ -1505,7 +1611,9 @@ class FactChecker:
             self.last_text_error = error_msg
             return []
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            response_json = response.json()
+            content = response_json["choices"][0]["message"]["content"]
+            grounding_sources = _clean_sources(response_json.get("grounding_sources", []))
         except Exception:
             self.last_text_error = "Upstream returned an unreadable text analysis response"
             return []
@@ -1533,7 +1641,7 @@ class FactChecker:
                     "verdict": "ANALYSIS COMPLETE",
                     "confidence": 60,
                     "explanation": fallback_text,
-                    "sources": urls[:5],
+                    "sources": _clean_sources(urls, grounding_sources),
                 },
             }]
         if not isinstance(claim_items, list):
@@ -1556,7 +1664,7 @@ class FactChecker:
                     "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
                     "confidence": _coerce_confidence(item.get("confidence", 75)),
                     "explanation": item.get("explanation", "Analysis completed"),
-                    "sources": _clean_sources(item.get("sources", [])),
+                    "sources": _clean_sources(item.get("sources", []), grounding_sources),
                 },
             })
         return results
@@ -1672,7 +1780,9 @@ class FactChecker:
             self.last_image_error = _extract_error_message(response)
             return []
         try:
-            content = response.json()["choices"][0]["message"]["content"]
+            response_json = response.json()
+            content = response_json["choices"][0]["message"]["content"]
+            grounding_sources = _clean_sources(response_json.get("grounding_sources", []))
         except Exception:
             self.last_image_error = "Upstream returned an unreadable vision response"
             return []
@@ -1700,7 +1810,7 @@ class FactChecker:
                     "verdict": "ANALYSIS COMPLETE",
                     "confidence": 60,
                     "explanation": fallback_text,
-                    "sources": urls[:5],
+                    "sources": _clean_sources(urls, grounding_sources),
                 },
             }]
         if not isinstance(claim_items, list):
@@ -1723,7 +1833,7 @@ class FactChecker:
                     "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
                     "confidence": _coerce_confidence(item.get("confidence", 75)),
                     "explanation": item.get("explanation", "Visual analysis completed"),
-                    "sources": _clean_sources(item.get("sources", [])),
+                    "sources": _clean_sources(item.get("sources", []), grounding_sources),
                 },
             })
         return results
@@ -1783,7 +1893,7 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
 
 def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
     try:
-        checker = FactChecker(api_key=api_key, groq_api_key=os.getenv('GROQ_API_KEY') or GROQ_API_KEY)
+        checker = FactChecker(api_key=api_key)
         image_data_url = _download_image_as_data_url(image_url)
         checks = checker.fact_check_image_content(
             image_url=None if image_data_url else image_url,
@@ -1856,12 +1966,14 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     results: List[Dict[str, Any]] = []
     text_analysis_error = ""
 
-    should_analyze_text = bool(text)
+    should_analyze_text = bool(text) and (
+        not image_urls or _has_substantial_article_text(text) or _has_claim_signal(text)
+    )
     if should_analyze_text:
         results.extend(checker.fact_check_text_claims(text))
         text_analysis_error = checker.last_text_error
         # Pause before any subsequent image analysis to avoid rate limits
-        if results:
+        if results and image_urls and hasattr(checker, "_rate_limit_pause"):
             checker._rate_limit_pause()
 
     image_analysis_results: List[Dict[str, Any]] = []
