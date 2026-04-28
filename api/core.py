@@ -24,8 +24,8 @@ def _get_env_var_insensitive(key: str) -> Optional[str]:
 
 GEMINI_API_KEY = _get_env_var_insensitive('GEMINI_API_KEY') or _get_env_var_insensitive('GOOGLE_API_KEY')
 GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-GEMINI_PRIMARY_MODEL = "gemini-2.0-flash-lite"
-GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash"]
+GEMINI_PRIMARY_MODEL = "gemini-2.0-flash"
+GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite"]
 
 # Groq API configuration — primary provider (OpenAI-compatible, higher free-tier RPM)
 GROQ_API_KEY = _get_env_var_insensitive('GROQ_API_KEY')

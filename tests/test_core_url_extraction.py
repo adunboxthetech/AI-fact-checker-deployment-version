@@ -168,7 +168,7 @@ class UrlExtractionTests(unittest.TestCase):
         models = core._models_for_payload({"model": core.GEMINI_PRIMARY_MODEL})
 
         self.assertEqual(models[0], core.GEMINI_PRIMARY_MODEL)
-        self.assertIn("gemini-2.0-flash", models)
+        self.assertIn("gemini-2.0-flash-lite", models)
 
     def test_grounding_redirect_sources_fall_back_to_titles(self):
         response = {
