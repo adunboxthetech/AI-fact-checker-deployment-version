@@ -207,6 +207,16 @@ class UrlExtractionTests(unittest.TestCase):
 
         self.assertEqual(core._unwrap_duckduckgo_url(url), "https://example.test/story?utm_source=x")
 
+    def test_bing_redirect_is_unwrapped(self):
+        url = "https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLnRlc3Qvc3Rvcnk&ntb=1"
+
+        self.assertEqual(core._unwrap_bing_url(url), "https://example.test/story")
+
+    def test_yahoo_redirect_is_unwrapped(self):
+        url = "https://r.search.yahoo.com/x/RU=https%3a%2f%2fexample.test%2fstory/RK=2/RS=x"
+
+        self.assertEqual(core._unwrap_yahoo_url(url), "https://example.test/story")
+
     @patch("api.core._gather_web_evidence_for_claims")
     @patch.object(core.FactChecker, "_post_api")
     def test_refine_results_uses_web_evidence_sources(self, post_api, gather_evidence):

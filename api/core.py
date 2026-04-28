@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, parse_qs, urljoin
+from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, parse_qs, unquote, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -646,6 +646,46 @@ def _unwrap_duckduckgo_url(url: str) -> str:
     return url
 
 
+def _unwrap_bing_url(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        if "bing.com" not in parsed.netloc or not parsed.path.startswith("/ck/"):
+            return url
+        encoded = parse_qs(parsed.query).get("u", [""])[0]
+        if not encoded:
+            return url
+        if encoded.startswith("http"):
+            return encoded
+        if encoded.startswith("a1"):
+            encoded = encoded[2:]
+        padding = "=" * (-len(encoded) % 4)
+        decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8", errors="replace")
+        return decoded or url
+    except Exception:
+        return url
+
+
+def _unwrap_yahoo_url(url: str) -> str:
+    if not url:
+        return ""
+    try:
+        parsed = urlparse(url)
+        if "search.yahoo.com" not in parsed.netloc:
+            return url
+        match = re.search(r"/RU=([^/]+)", parsed.path)
+        if match:
+            return unquote(match.group(1))
+    except Exception:
+        return url
+    return url
+
+
+def _unwrap_search_result_url(url: str) -> str:
+    return _unwrap_yahoo_url(_unwrap_bing_url(_unwrap_duckduckgo_url(url)))
+
+
 def _clean_search_query(text: str, max_chars: int = 160) -> str:
     text = re.sub(r"^\[Image\]\s*", "", text or "", flags=re.I)
     text = re.sub(r"https?://\S+", " ", text)
@@ -659,7 +699,16 @@ def _claim_key(text: str) -> str:
     return _clean_text(re.sub(r"^\[Image\]\s*", "", text or "", flags=re.I)).lower()
 
 
-def _search_web_sources(query: str, max_results: int = MAX_WEB_EVIDENCE_SOURCES) -> List[Dict[str, str]]:
+def _rank_search_sources(items: List[Dict[str, str]], max_results: int) -> List[Dict[str, str]]:
+    social = [item for item in items if _is_social_source_url(item.get("url", ""))]
+    nonsocial = [item for item in items if not _is_social_source_url(item.get("url", ""))]
+    ordered = nonsocial or social
+    deduped_urls = _dedupe_sources([item["url"] for item in ordered], max_results)
+    by_url = {item["url"]: item for item in ordered}
+    return [by_url[url] for url in deduped_urls if url in by_url]
+
+
+def _search_duckduckgo_sources(query: str, max_results: int) -> List[Dict[str, str]]:
     query = _clean_search_query(query)
     if not query:
         return []
@@ -673,31 +722,98 @@ def _search_web_sources(query: str, max_results: int = MAX_WEB_EVIDENCE_SOURCES)
         if resp.status_code != 200:
             return []
         soup = BeautifulSoup(resp.text, "lxml")
-        social: List[Dict[str, str]] = []
-        nonsocial: List[Dict[str, str]] = []
+        items: List[Dict[str, str]] = []
         for node in soup.select(".result"):
             link = node.select_one(".result__a")
             if not link:
                 continue
-            url = _normalize_source_url(_unwrap_duckduckgo_url(link.get("href", "")))
+            url = _normalize_source_url(_unwrap_search_result_url(link.get("href", "")))
             if not url or _is_google_grounding_redirect(url):
                 continue
             title = _clean_text(link.get_text(" ", strip=True))
             snippet_node = node.select_one(".result__snippet")
             snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
-            item = {"url": url, "title": title, "snippet": snippet}
-            if _is_social_source_url(url):
-                social.append(item)
-            else:
-                nonsocial.append(item)
-            if len(nonsocial) >= max_results:
+            items.append({"url": url, "title": title, "snippet": snippet})
+            if len(items) >= max_results * 2:
                 break
-        ordered = nonsocial or social
-        deduped_urls = _dedupe_sources([item["url"] for item in ordered], max_results)
-        by_url = {item["url"]: item for item in ordered}
-        return [by_url[url] for url in deduped_urls if url in by_url]
+        return _rank_search_sources(items, max_results)
     except Exception:
         return []
+
+
+def _search_bing_sources(query: str, max_results: int) -> List[Dict[str, str]]:
+    query = _clean_search_query(query)
+    if not query:
+        return []
+    try:
+        resp = requests.get(
+            "https://www.bing.com/search",
+            params={"q": query},
+            headers=DEFAULT_HEADERS,
+            timeout=WEB_SEARCH_TIMEOUT_SECONDS,
+        )
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, "lxml")
+        items: List[Dict[str, str]] = []
+        for node in soup.select("li.b_algo"):
+            link = node.find("a")
+            if not link:
+                continue
+            url = _normalize_source_url(_unwrap_search_result_url(link.get("href", "")))
+            if not url or _is_google_grounding_redirect(url):
+                continue
+            title = _clean_text(link.get_text(" ", strip=True))
+            snippet_node = node.find("p")
+            snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+            items.append({"url": url, "title": title, "snippet": snippet})
+            if len(items) >= max_results * 2:
+                break
+        return _rank_search_sources(items, max_results)
+    except Exception:
+        return []
+
+
+def _search_yahoo_sources(query: str, max_results: int) -> List[Dict[str, str]]:
+    query = _clean_search_query(query)
+    if not query:
+        return []
+    try:
+        resp = requests.get(
+            "https://search.yahoo.com/search",
+            params={"p": query},
+            headers=DEFAULT_HEADERS,
+            timeout=WEB_SEARCH_TIMEOUT_SECONDS,
+        )
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, "lxml")
+        items: List[Dict[str, str]] = []
+        for node in soup.select("div.dd.algo"):
+            link = node.find("a")
+            if not link:
+                continue
+            url = _normalize_source_url(_unwrap_search_result_url(link.get("href", "")))
+            if not url or _is_google_grounding_redirect(url):
+                continue
+            title = _clean_text(link.get_text(" ", strip=True))
+            snippet_node = node.find(class_="compText")
+            snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+            items.append({"url": url, "title": title, "snippet": snippet})
+            if len(items) >= max_results * 2:
+                break
+        return _rank_search_sources(items, max_results)
+    except Exception:
+        return []
+
+
+def _search_web_sources(query: str, max_results: int = MAX_WEB_EVIDENCE_SOURCES) -> List[Dict[str, str]]:
+    combined: List[Dict[str, str]] = []
+    for search_fn in (_search_duckduckgo_sources, _search_bing_sources, _search_yahoo_sources):
+        if len(_dedupe_sources([item["url"] for item in combined], max_results)) >= max_results:
+            break
+        combined.extend(search_fn(query, max_results))
+    return _rank_search_sources(combined, max_results)
 
 
 def _fetch_evidence_page_summary(source: Dict[str, str]) -> Dict[str, str]:
