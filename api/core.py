@@ -1341,6 +1341,8 @@ class FactChecker:
             encoded = json.dumps(groq_payload).encode("utf-8")
             headers = {
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "AI-Fact-Checker/1.0 (+https://anindya-das-ai-fact-checker.vercel.app)",
                 "Authorization": f"Bearer {self.groq_api_key}",
             }
             model_failed = False
