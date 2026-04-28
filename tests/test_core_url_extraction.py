@@ -315,7 +315,7 @@ class UrlExtractionTests(unittest.TestCase):
                         "verdict": "TRUE",
                         "confidence": 90,
                         "explanation": "Verified.",
-                        "sources": ["https://example.test/source"],
+                        "sources": [],
                     },
                 }]
 
@@ -374,7 +374,7 @@ class UrlExtractionTests(unittest.TestCase):
                         "verdict": "TRUE",
                         "confidence": 90,
                         "explanation": "Verified.",
-                        "sources": ["https://example.test/source"],
+                        "sources": [],
                     },
                 }]
 
@@ -390,6 +390,7 @@ class UrlExtractionTests(unittest.TestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(response["claims_found"], 1)
+        self.assertEqual(response["fact_check_results"][0]["result"]["sources"], ["https://example.test/article"])
         self.assertIn("image_analysis_skipped_reason", response)
         analyze_images.assert_not_called()
 

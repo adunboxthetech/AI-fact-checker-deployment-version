@@ -1994,6 +1994,12 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
                     if isinstance(item, dict) and item.get("claim") and item.get("result"):
                         results.append(item)
 
+    source_fallback = _clean_sources([url])
+    for item in results:
+        result = item.get("result") if isinstance(item, dict) else None
+        if isinstance(result, dict) and not _clean_sources(result.get("sources", [])):
+            result["sources"] = source_fallback
+
     response = {
         "original_text": text,
         "claims_found": len(results),
