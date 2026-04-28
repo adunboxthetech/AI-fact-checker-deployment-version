@@ -1997,8 +1997,8 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     source_fallback = _clean_sources([url])
     for item in results:
         result = item.get("result") if isinstance(item, dict) else None
-        if isinstance(result, dict) and not _clean_sources(result.get("sources", [])):
-            result["sources"] = source_fallback
+        if isinstance(result, dict):
+            result["sources"] = _dedupe_sources(source_fallback + _clean_sources(result.get("sources", [])))
 
     response = {
         "original_text": text,
