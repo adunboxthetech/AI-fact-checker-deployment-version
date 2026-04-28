@@ -1983,7 +1983,7 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     should_analyze_images = bool(image_urls) and not _has_substantial_article_text(text)
     if image_urls and not should_analyze_images:
         image_analysis_skipped_reason = (
-            "Visual analysis skipped because article text was available; this avoids unnecessary Gemini vision quota."
+            "Visual analysis skipped because article text was available; image analysis is reserved for image-first posts."
         )
     if should_analyze_images:
         image_analysis_results = _analyze_image_urls_with_queue(checker, image_urls)
