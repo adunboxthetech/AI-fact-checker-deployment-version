@@ -202,6 +202,53 @@ class UrlExtractionTests(unittest.TestCase):
 
         self.assertEqual(cleaned, ["https://reuters.com"])
 
+    def test_duckduckgo_redirect_is_unwrapped(self):
+        url = "//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.test%2Fstory%3Futm_source%3Dx"
+
+        self.assertEqual(core._unwrap_duckduckgo_url(url), "https://example.test/story?utm_source=x")
+
+    @patch("api.core._gather_web_evidence_for_claims")
+    @patch.object(core.FactChecker, "_post_api")
+    def test_refine_results_uses_web_evidence_sources(self, post_api, gather_evidence):
+        gather_evidence.return_value = {
+            "Shreyovi won an international photography award at 9 years old": [{
+                "url": "https://thelogicalindian.com/story",
+                "title": "Nine-Year-Old Shreyovi Mehta Earns Recognition",
+                "snippet": "Nine-year-old Shreyovi Mehta gained international recognition.",
+            }]
+        }
+        post_api.return_value = core.GeminiResponse(
+            status_code=200,
+            body=json.dumps({
+                "choices": [{
+                    "message": {
+                        "content": json.dumps({
+                            "claims": [{
+                                "claim": "Shreyovi won an international photography award at 9 years old",
+                                "verdict": "TRUE",
+                                "confidence": 92,
+                                "explanation": "Independent coverage confirms the claim.",
+                                "sources": ["https://thelogicalindian.com/story"],
+                            }]
+                        })
+                    }
+                }]
+            }),
+        )
+        checker = core.FactChecker(api_key="test-key")
+        refined = checker.refine_results_with_web_evidence([{
+            "claim": "Shreyovi won an international photography award at 9 years old",
+            "result": {
+                "verdict": "INSUFFICIENT EVIDENCE",
+                "confidence": 50,
+                "explanation": "Not enough data.",
+                "sources": ["https://x.com/example/status/1"],
+            },
+        }])
+
+        self.assertEqual(refined[0]["result"]["verdict"], "TRUE")
+        self.assertEqual(refined[0]["result"]["sources"], ["https://thelogicalindian.com/story"])
+
     def test_parse_json_block_handles_fenced_array(self):
         parsed = core._try_parse_json_block(
             '```json\n[{"claim":"Chegg declined","verdict":"TRUE"}]\n```'

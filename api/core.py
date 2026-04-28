@@ -6,11 +6,12 @@ import re
 import time
 import datetime
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, urljoin
+from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, parse_qs, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -81,6 +82,11 @@ MAX_IMAGE_CLAIMS = 4
 MAX_IMAGES_TO_ANALYZE = 2
 MAX_CONCURRENT_IMAGE_REQUESTS = 1
 MAX_IMAGE_DOWNLOAD_BYTES = 8 * 1024 * 1024
+MAX_WEB_EVIDENCE_SOURCES = 5
+MAX_WEB_EVIDENCE_CLAIMS = 6
+MAX_WEB_EVIDENCE_FETCHES = 4
+WEB_SEARCH_TIMEOUT_SECONDS = 8
+WEB_EVIDENCE_FETCH_TIMEOUT_SECONDS = 6
 GEMINI_RETRY_ATTEMPTS = 1
 GEMINI_INITIAL_RETRY_DELAY_SECONDS = 1.0
 GEMINI_BACKOFF_MULTIPLIER = 2.0
@@ -227,6 +233,29 @@ def _dedupe_sources(urls: List[str], limit: int = 5) -> List[str]:
         if len(cleaned) >= limit:
             break
     return cleaned
+
+
+def _source_host(url: str) -> str:
+    try:
+        return (urlparse(url).hostname or "").lower().removeprefix("www.")
+    except Exception:
+        return ""
+
+
+def _is_social_source_url(url: str) -> bool:
+    host = _source_host(url)
+    return host in {
+        "x.com",
+        "twitter.com",
+        "mobile.twitter.com",
+        "facebook.com",
+        "instagram.com",
+        "threads.net",
+        "tiktok.com",
+        "reddit.com",
+        "youtube.com",
+        "youtu.be",
+    } or host.endswith(".reddit.com")
 
 
 def _extract_grounding_sources(response_data: Dict[str, Any]) -> List[str]:
@@ -600,6 +629,134 @@ def _fetch_jina_text(url: str) -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+def _unwrap_duckduckgo_url(url: str) -> str:
+    if not url:
+        return ""
+    if url.startswith("//"):
+        url = f"https:{url}"
+    try:
+        parsed = urlparse(url)
+        if "duckduckgo.com" in parsed.netloc and parsed.path.startswith("/l/"):
+            target = parse_qs(parsed.query).get("uddg", [""])[0]
+            return target or url
+    except Exception:
+        return url
+    return url
+
+
+def _clean_search_query(text: str, max_chars: int = 160) -> str:
+    text = re.sub(r"^\[Image\]\s*", "", text or "", flags=re.I)
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" -:|")
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rsplit(" ", 1)[0].strip()
+
+
+def _claim_key(text: str) -> str:
+    return _clean_text(re.sub(r"^\[Image\]\s*", "", text or "", flags=re.I)).lower()
+
+
+def _search_web_sources(query: str, max_results: int = MAX_WEB_EVIDENCE_SOURCES) -> List[Dict[str, str]]:
+    query = _clean_search_query(query)
+    if not query:
+        return []
+    try:
+        resp = requests.get(
+            "https://duckduckgo.com/html/",
+            params={"q": query},
+            headers=DEFAULT_HEADERS,
+            timeout=WEB_SEARCH_TIMEOUT_SECONDS,
+        )
+        if resp.status_code != 200:
+            return []
+        soup = BeautifulSoup(resp.text, "lxml")
+        social: List[Dict[str, str]] = []
+        nonsocial: List[Dict[str, str]] = []
+        for node in soup.select(".result"):
+            link = node.select_one(".result__a")
+            if not link:
+                continue
+            url = _normalize_source_url(_unwrap_duckduckgo_url(link.get("href", "")))
+            if not url or _is_google_grounding_redirect(url):
+                continue
+            title = _clean_text(link.get_text(" ", strip=True))
+            snippet_node = node.select_one(".result__snippet")
+            snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+            item = {"url": url, "title": title, "snippet": snippet}
+            if _is_social_source_url(url):
+                social.append(item)
+            else:
+                nonsocial.append(item)
+            if len(nonsocial) >= max_results:
+                break
+        ordered = nonsocial or social
+        deduped_urls = _dedupe_sources([item["url"] for item in ordered], max_results)
+        by_url = {item["url"]: item for item in ordered}
+        return [by_url[url] for url in deduped_urls if url in by_url]
+    except Exception:
+        return []
+
+
+def _fetch_evidence_page_summary(source: Dict[str, str]) -> Dict[str, str]:
+    url = source.get("url", "")
+    if not url or _is_social_source_url(url):
+        return source
+    try:
+        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=WEB_EVIDENCE_FETCH_TIMEOUT_SECONDS)
+        if resp.status_code >= 400 or not _is_html_content_type(resp.headers.get("Content-Type", "")):
+            return source
+        soup = BeautifulSoup(resp.text, "lxml")
+        title, description = _extract_meta_text(soup)
+        body = _extract_body_text(resp.text)
+        summary = _clean_text(" ".join(part for part in [description, body[:900]] if part))
+        if title:
+            source["title"] = title
+        if summary:
+            source["snippet"] = _truncate(summary, 900)
+    except Exception:
+        pass
+    return source
+
+
+def _gather_web_evidence_for_claims(claims: List[str]) -> Dict[str, List[Dict[str, str]]]:
+    clean_claims = [_clean_search_query(claim) for claim in claims if _clean_search_query(claim)]
+    clean_claims = _dedupe(clean_claims)[:MAX_WEB_EVIDENCE_CLAIMS]
+    if not clean_claims:
+        return {}
+
+    evidence: Dict[str, List[Dict[str, str]]] = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(clean_claims))) as executor:
+        futures = {executor.submit(_search_web_sources, claim): claim for claim in clean_claims}
+        for future in as_completed(futures):
+            claim = futures[future]
+            try:
+                sources = future.result() or []
+            except Exception:
+                sources = []
+            evidence[claim] = sources
+
+    fetch_candidates: List[Tuple[str, Dict[str, str]]] = []
+    for claim, sources in evidence.items():
+        for source in sources[:MAX_WEB_EVIDENCE_FETCHES]:
+            fetch_candidates.append((claim, source))
+
+    if fetch_candidates:
+        with ThreadPoolExecutor(max_workers=min(6, len(fetch_candidates))) as executor:
+            futures = {
+                executor.submit(_fetch_evidence_page_summary, dict(source)): (claim, index)
+                for claim, sources in evidence.items()
+                for index, source in enumerate(sources[:MAX_WEB_EVIDENCE_FETCHES])
+            }
+            for future in as_completed(futures):
+                claim, index = futures[future]
+                try:
+                    evidence[claim][index] = future.result()
+                except Exception:
+                    pass
+    return evidence
 
 
 def _dedupe(items: List[str]) -> List[str]:
@@ -1671,6 +1828,100 @@ class FactChecker:
             })
         return results
 
+    def refine_results_with_web_evidence(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Search the public web for each claim and rerank/rewrite verdicts against evidence snippets."""
+        self.last_text_error = ""
+        claims = [
+            _clean_search_query(item.get("claim", ""))
+            for item in results[:MAX_WEB_EVIDENCE_CLAIMS]
+            if isinstance(item, dict) and item.get("claim")
+        ]
+        evidence_by_claim = _gather_web_evidence_for_claims(claims)
+        if not any(evidence_by_claim.values()):
+            return results
+
+        def evidence_sources_for(claim: str) -> List[str]:
+            evidence = evidence_by_claim.get(_clean_search_query(claim), [])
+            return _clean_sources([item.get("url", "") for item in evidence])
+
+        evidence_payload = []
+        for item in results[:MAX_WEB_EVIDENCE_CLAIMS]:
+            if not isinstance(item, dict) or not item.get("claim"):
+                continue
+            clean_claim = _clean_search_query(item["claim"])
+            evidence = evidence_by_claim.get(clean_claim, [])
+            if not evidence:
+                continue
+            evidence_payload.append({
+                "claim": item["claim"],
+                "current_verdict": item.get("result", {}).get("verdict"),
+                "current_explanation": item.get("result", {}).get("explanation"),
+                "evidence": evidence[:MAX_WEB_EVIDENCE_SOURCES],
+            })
+
+        if not evidence_payload:
+            return results
+
+        current_date = datetime.date.today().isoformat()
+        prompt = (
+            f"Today's date is {current_date}. You are a careful fact-checking editor. "
+            "Re-check each claim using the provided public web evidence snippets. "
+            "Prefer independent reporting, official sources, and primary documents over the original social post. "
+            "If the evidence supports the claim, mark TRUE. If it contradicts the claim, mark FALSE or PARTIALLY TRUE. "
+            "If the evidence is weak, missing, circular, or only repeats the same social post, mark INSUFFICIENT EVIDENCE. "
+            "Use only URLs that appear in the evidence list as sources. "
+            "Return ONLY JSON with this exact shape: "
+            '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE|UNVERIFIABLE",'
+            '"confidence":85,"explanation":"2-3 sentences describing the evidence used","sources":["https://..."]}]}. '
+            f"Evidence package: {json.dumps(evidence_payload, ensure_ascii=False)}"
+        )
+        payload = {
+            "model": GEMINI_PRIMARY_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+        }
+        response = self._post_api(payload)
+
+        updates: Dict[str, Dict[str, Any]] = {}
+        if response is not None and response.status_code == 200:
+            try:
+                content = response.json()["choices"][0]["message"]["content"]
+                parsed = _try_parse_json_block(content)
+                claim_items = parsed.get("claims", []) if isinstance(parsed, dict) else parsed
+                if isinstance(claim_items, dict):
+                    claim_items = [claim_items]
+                if isinstance(claim_items, list):
+                    for item in claim_items:
+                        if isinstance(item, dict) and item.get("claim"):
+                            updates[_claim_key(item["claim"])] = item
+            except Exception:
+                updates = {}
+        elif response is not None:
+            self.last_text_error = _extract_error_message(response)
+
+        refined: List[Dict[str, Any]] = []
+        for item in results:
+            if not isinstance(item, dict) or not item.get("claim") or not isinstance(item.get("result"), dict):
+                refined.append(item)
+                continue
+            update = updates.get(_claim_key(item["claim"]))
+            evidence_sources = evidence_sources_for(item["claim"])
+            if update:
+                model_sources = _clean_sources(update.get("sources", []))
+                item = {
+                    "claim": item["claim"],
+                    "result": {
+                        "verdict": update.get("verdict", item["result"].get("verdict", "INSUFFICIENT EVIDENCE")),
+                        "confidence": _coerce_confidence(update.get("confidence", item["result"].get("confidence", 75))),
+                        "explanation": update.get("explanation", item["result"].get("explanation", "Analysis completed")),
+                        "sources": _dedupe_sources(model_sources + evidence_sources, MAX_WEB_EVIDENCE_SOURCES),
+                    },
+                }
+            elif evidence_sources and not _clean_sources(item["result"].get("sources", [])):
+                item["result"]["sources"] = evidence_sources
+            refined.append(item)
+        return refined
+
     def extract_image_claims(self, image_url: Optional[str], image_data_url: Optional[str], max_claims: int = MAX_IMAGE_CLAIMS) -> List[str]:
         self.last_image_error = ""
         if not image_url and not image_data_url:
@@ -1857,6 +2108,8 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
         return {"error": "No text provided"}, 400
 
     results = checker.fact_check_text_claims(text)
+    if results and hasattr(checker, "refine_results_with_web_evidence"):
+        results = checker.refine_results_with_web_evidence(results)
 
     response = {
         "original_text": text,
@@ -1879,6 +2132,8 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
         image_data_url = _download_image_as_data_url(image_url)
 
     results = checker.fact_check_image_content(image_url=image_url, image_data_url=image_data_url)
+    if results and hasattr(checker, "refine_results_with_web_evidence"):
+        results = checker.refine_results_with_web_evidence(results)
     image_analysis_error = checker.last_image_error
 
     response = {
@@ -1994,11 +2249,14 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
                     if isinstance(item, dict) and item.get("claim") and item.get("result"):
                         results.append(item)
 
+    if results and hasattr(checker, "refine_results_with_web_evidence"):
+        results = checker.refine_results_with_web_evidence(results)
+
     source_fallback = _clean_sources([url])
     for item in results:
         result = item.get("result") if isinstance(item, dict) else None
         if isinstance(result, dict):
-            result["sources"] = _dedupe_sources(source_fallback + _clean_sources(result.get("sources", [])))
+            result["sources"] = _dedupe_sources(_clean_sources(result.get("sources", [])) + source_fallback)
 
     response = {
         "original_text": text,
