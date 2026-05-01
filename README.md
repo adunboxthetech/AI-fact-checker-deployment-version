@@ -21,7 +21,7 @@ AI Fact Checker is a tool I built to verify online claims, articles, and images.
   - **Groq (Primary)**: Handles the fast inference using Llama 3.3-70b and Llama 4.
   - **Google Gemini (Grounding)**: Steps in for the heavy reasoning and real-time Google Search grounding.
 - **Evidence Grounding**: It doesn't just give a verdict. Every check includes a confidence score and the actual source URLs.
-- **The UI**: A responsive, dark-mode-first frontend. I used glassmorphism and added some Three.js particle clouds for the background.
+- **The UI**: A responsive, dark-mode-first frontend. I added some Three.js particle clouds for the background.
 
 ## Tech Stack
 
