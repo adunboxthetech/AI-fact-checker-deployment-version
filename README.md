@@ -2,7 +2,14 @@
 
 AI Fact Checker is a powerful, multi-modal tool designed to verify claims, articles, and images with unparalleled accuracy. By leveraging advanced AI models and real-time web grounding, it provides users with reasoned verdicts and cited evidence to combat misinformation.
 
-![AI Fact Checker Logo](assets/AD_logo.png)
+<p align="center">
+  <img src="assets/screenshot1.png" width="45%" alt="Landing Page Light" />
+  <img src="assets/screenshot2.png" width="45%" alt="Landing Page Dark" />
+</p>
+<p align="center">
+  <img src="assets/screenshot3.png" width="45%" alt="Analysis Light" />
+  <img src="assets/screenshot4.png" width="45%" alt="Analysis Dark" />
+</p>
 
 ## 🚀 Features
 
