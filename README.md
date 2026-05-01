@@ -15,7 +15,7 @@ AI Fact Checker is a tool I built to verify online claims, articles, and images.
 
 - **Multi-modal Verification**: Fact-check raw text, drop in a web URL, or upload images directly to see what's real.
 - **Web Extraction**: Built-in scrapers to pull clean content from:
-  - **Social Media**: Custom adapters for Twitter/X, Reddit, TikTok, and YouTube.
+  - **Social Media**: Custom adapters for social media sites like X/Twitter or reddit.
   - **Articles**: Reliable text extraction using `readability` and `BeautifulSoup`.
 - **Hybrid AI Architecture**:
   - **Groq (Primary)**: Handles the fast inference using Llama 3.3-70b and Llama 4.
