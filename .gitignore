@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.production
+.env.vercel*
 
 # Python
 __pycache__/
@@ -24,6 +25,10 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Scratch/Patch scripts
+scratch*.py
+patch_*.py
 
 # Virtual environments
 venv/

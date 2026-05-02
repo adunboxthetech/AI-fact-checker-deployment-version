@@ -45,7 +45,7 @@ class FactCheckerApp {
             });
         }
         // single button handles both
-        
+
         // Allow Enter to trigger fact check
         this.textInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -71,7 +71,9 @@ class FactCheckerApp {
         document.addEventListener('paste', (e) => {
             // Ignore if pasting into a specific input that might want text
             // But actually we want to catch it globally if it's an image.
-            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            const clipboardData = e.clipboardData || (e.originalEvent && e.originalEvent.clipboardData);
+            if (!clipboardData) return;
+            const items = clipboardData.items;
             const files = [];
             for (let index in items) {
                 const item = items[index];
@@ -95,13 +97,13 @@ class FactCheckerApp {
     async loadImages(files) {
         // Single image for now
         const file = files[0];
-        
+
         // Check file size (limit to 5MB)
         if (file.size > 5 * 1024 * 1024) {
             alert('Image file is too large. Please use an image smaller than 5MB.');
             return;
         }
-        
+
         const reader = new FileReader();
         reader.onload = () => {
             this.imageDataUrl = reader.result;
@@ -217,7 +219,7 @@ class FactCheckerApp {
             this.executeFactCheck(text, hasImage);
         }
     }
-    
+
     async executeFactCheck(text, hasImage) {
         this.showLoading();
         try {
@@ -226,17 +228,17 @@ class FactCheckerApp {
                 console.log('Sending image for analysis...');
                 const payload = { image_data_url: this.imageDataUrl };
                 console.log('Payload size:', JSON.stringify(payload).length, 'characters');
-                
+
                 const url = `${this.apiUrl}/fact-check-image`;
                 console.log('Calling URL:', url);
                 console.log('API URL base:', this.apiUrl);
-                
+
                 response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                
+
                 console.log('Response status:', response.status);
                 console.log('Response headers:', Object.fromEntries(response.headers.entries()));
             } else {
@@ -253,7 +255,7 @@ class FactCheckerApp {
                 console.error('HTTP Error:', response.status, errorText);
                 throw new Error(`HTTP ${response.status}: ${errorText}`);
             }
-            
+
             const data = await response.json();
             console.log('Response data:', data);
 
@@ -292,7 +294,7 @@ class FactCheckerApp {
         if (this.bottomArea) this.bottomArea.classList.remove('results-mode');
         // Restore clear button to icon-only
         this.clearBtn.innerHTML = '<i class="fas fa-eraser"></i>';
-        
+
         // Remove image
         this.imageDataUrl = null;
         if (this.imagePreview) {
@@ -341,7 +343,7 @@ class FactCheckerApp {
     displayResults(data) {
 
         this.resultsContainer.innerHTML = '';
-        
+
         if (data.source_url) {
             const src = document.createElement('div');
             src.className = 'source-banner';
@@ -364,7 +366,7 @@ class FactCheckerApp {
                 imgInfo.style.margin = '4px 0 12px';
                 imgInfo.style.color = 'var(--muted)';
                 imgInfo.style.fontSize = '0.9rem';
-                
+
                 // Check if images were detected but not accessible
                 if (data.images_detected === 0 && data.image_detection_info && data.image_detection_info.image_detected) {
                     imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> Images found in this post, but they cannot be accessed directly from the URL.`;
@@ -378,7 +380,7 @@ class FactCheckerApp {
                     imgInfo.innerHTML = `<i class="fas fa-image"></i> <strong>Images detected:</strong> ${data.images_detected}. ${data.images_detected > 0 ? 'Visual content was considered in the analysis.' : 'No images detected.'}`;
                 }
                 this.resultsContainer.appendChild(imgInfo);
-                
+
                 const imageMessage = data.image_analysis_error || data.image_detection_message || data.image_analysis_skipped_reason;
                 if (imageMessage) {
                     const msgDiv = document.createElement('div');
@@ -444,37 +446,37 @@ class FactCheckerApp {
                 this.resultsContainer.appendChild(claimElement);
             });
         }
-        
+
         this.resultsSection.classList.remove('hidden');
-        
+
         // Trigger cinematic reveal
         if (typeof mysticalEngine !== 'undefined') {
             mysticalEngine.triggerReveal();
         }
-        
+
         // Enter results-mode: centered clear button, hide attach/send
         if (this.bottomArea) this.bottomArea.classList.add('results-mode');
         this.clearBtn.innerHTML = '<i class="fas fa-eraser"></i><span class="clear-label">New Check</span>';
-        
+
         this.resultsSection.scrollIntoView({ behavior: 'smooth' });
     }
 
     extractSubClaims(result) {
         if (!result || !result.result || !result.result.explanation) return null;
-        
+
         let exp = result.result.explanation;
         if (typeof exp !== 'string') return null;
 
         try {
             let jsonStr = exp;
-            
+
             if (jsonStr.includes('```')) {
                 const match = jsonStr.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
                 if (match && match[1]) {
                     jsonStr = match[1];
                 }
             }
-            
+
             if (jsonStr.trim().startsWith('json ')) {
                 jsonStr = jsonStr.trim().substring(5);
             }
@@ -488,7 +490,7 @@ class FactCheckerApp {
                 } else if (parsed.fact_check_results && Array.isArray(parsed.fact_check_results)) {
                     claimsArray = parsed.fact_check_results;
                 }
-                
+
                 if (claimsArray && claimsArray.length > 0 && claimsArray[0].claim) {
                     return claimsArray.map(c => {
                         return {
@@ -511,17 +513,17 @@ class FactCheckerApp {
                 let firstBrace = jsonStr.indexOf('{');
                 let firstBracket = jsonStr.indexOf('[');
                 let startIdx = -1;
-                
+
                 if (firstBrace !== -1 && firstBracket !== -1) startIdx = Math.min(firstBrace, firstBracket);
                 else if (firstBrace !== -1) startIdx = firstBrace;
                 else if (firstBracket !== -1) startIdx = firstBracket;
-                
+
                 if (startIdx !== -1) {
                     // Shrink from the right to find a valid JSON block
                     for (let endIdx = jsonStr.length - 1; endIdx >= startIdx; endIdx--) {
                         if (jsonStr[endIdx] === '}' || jsonStr[endIdx] === ']') {
                             let cleanJson = jsonStr.substring(startIdx, endIdx + 1);
-                            
+
                             try {
                                 let result = processParsedJson(JSON.parse(cleanJson));
                                 if (result) return result;
@@ -552,7 +554,7 @@ class FactCheckerApp {
 
     createClaimElement(result, index) {
         const div = document.createElement('div');
-        
+
         // Safety check for result structure
         if (!result || !result.result) {
             div.innerHTML = `
@@ -565,18 +567,18 @@ class FactCheckerApp {
             `;
             return div;
         }
-        
+
         const verdict = result.result.verdict ? result.result.verdict.toLowerCase() : 'unknown';
         const verdictClass = this.getVerdictClass(verdict);
-        
+
         div.className = `claim-result ${verdictClass}`;
-        
+
         // Format the explanation nicely instead of showing raw JSON
         let explanation = result.result.explanation || 'No explanation provided';
         let extractedSources = result.result.sources || [];
-        
+
         const sourcesHtml = this.renderSources(extractedSources);
-        
+
         if (typeof explanation === 'string') {
             let trimmedExp = explanation.trim();
             if (trimmedExp.startsWith('{') || trimmedExp.startsWith('[')) {
@@ -585,7 +587,7 @@ class FactCheckerApp {
                     if (jsonStr.startsWith('json ')) {
                         jsonStr = jsonStr.substring(5);
                     }
-                    
+
                     let parsed = null;
                     try {
                         parsed = JSON.parse(jsonStr);
@@ -601,7 +603,7 @@ class FactCheckerApp {
                             }
                         }
                     }
-                    
+
                     if (parsed) {
                         if (parsed.explanation) {
                             explanation = parsed.explanation;
@@ -611,7 +613,7 @@ class FactCheckerApp {
                                 explanation += ` (Confidence: ${parsed.confidence}%)`;
                             }
                         }
-                        
+
                         if (parsed.sources && Array.isArray(parsed.sources) && parsed.sources.length > 0) {
                             extractedSources = parsed.sources;
                         }
@@ -628,30 +630,30 @@ class FactCheckerApp {
                 }
             }
         }
-        
+
         div.innerHTML = `
             <div class="claim-text">
                 <strong>Claim ${index}:</strong> ${this.escapeHtml(result.claim || 'Unknown claim')}
             </div>
-            
 
-            
+
+
             <div class="verdict ${verdictClass}">
                 ${this.escapeHtml(result.result.verdict || 'UNKNOWN')}
             </div>
-            
+
             <div class="confidence">
                 <i class="fas fa-chart-bar"></i>
                 <strong>Confidence:</strong> ${this.escapeHtml(String(result.result.confidence || 'N/A'))}%
             </div>
-            
+
             <div class="explanation">
                 <i class="fas fa-info-circle"></i>
                 <strong>Analysis:</strong> ${this.escapeHtml(explanation)}
             </div>
             ${sourcesHtml}
         `;
-        
+
         return div;
     }
 
@@ -753,32 +755,32 @@ class MysticalEngine {
         this.textInput = document.getElementById('textInput');
         this.floatingPrompt = document.querySelector('.floating-prompt');
         this.resultsSection = document.getElementById('resultsSection');
-        
+
         if (!this.webglCanvas || !this.particleCanvas) return;
-        
+
         this.initWebGLCloud();
         this.initParticleEngine();
-        
+
         // Handle window resize
         window.addEventListener('resize', () => {
             this.resizeWebGL();
             this.resizeParticleCanvas();
         });
     }
-    
+
     initWebGLCloud() {
         if (typeof THREE === 'undefined') return;
-        
+
         this.scene = new THREE.Scene();
         this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
         this.renderer = new THREE.WebGLRenderer({ canvas: this.webglCanvas, alpha: true, antialias: true });
-        
+
         const fragmentShader = `
             uniform float iTime;
             uniform vec2 iResolution;
             uniform float intensity;
             uniform float loadingState;
-            
+
             // Noise functions
             vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
             vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -804,62 +806,62 @@ class MysticalEngine {
                 g.yz = a0.yz * x12.xz + h.yz * x12.yw;
                 return 130.0 * dot(m, g);
             }
-            
+
             void mainImage( out vec4 fragColor, in vec2 fragCoord ) {
                 vec2 uv = fragCoord/iResolution.xy;
                 vec2 centeredUv = uv - vec2(0.5, 0.5);
                 centeredUv.x *= iResolution.x/iResolution.y;
-                
+
                 float baseTime = iTime * 0.2;
                 float rotAngle = iTime * 0.8; // Always rotate to prevent phase jumps
                 mat2 rot = mat2(cos(rotAngle), -sin(rotAngle), sin(rotAngle), cos(rotAngle));
-                
+
                 vec2 ruv = mix(uv, centeredUv * rot + vec2(0.5), loadingState);
-                
+
                 float t = iTime * 0.3; // Constant time scale to prevent phase jumps
-                
+
                 // Multilayer noise
                 float n1 = snoise(ruv * 1.5 + vec2(t, t * 0.5));
                 float n2 = snoise(ruv * 3.0 - vec2(t * 1.2, t * 0.8));
                 float n3 = snoise(ruv * 5.0 + vec2(t * 0.5, -t));
-                
+
                 float n = n1 * 0.5 + n2 * 0.25 + n3 * 0.125;
                 n = n * 0.5 + 0.5; // map to 0-1
-                
+
                 // Colors (Deep mystical purple/blue/cyan to ethereal white)
                 vec3 col1 = vec3(0.28, 0.3, 0.84); // Indigo
                 vec3 col2 = vec3(0.46, 0.23, 0.86); // Purple
                 vec3 col3 = vec3(0.85, 0.95, 1.0);  // Ethereal White/Cyan
-                
+
                 vec3 finalCol = mix(col1, col2, smoothstep(0.2, 0.8, n));
                 finalCol = mix(finalCol, col3, smoothstep(0.5, 1.0, n) * (0.5 + intensity * 0.5));
-                
+
                 // Ambient mask: dense at bottom, fading up
                 float ambientMask = smoothstep(0.8, 0.0, fragCoord.y/iResolution.y);
                 ambientMask = pow(ambientMask, 1.5) * (n * 0.5 + 0.5);
-                
+
                 // Loading mask: circular in the center
                 float dist = length(centeredUv);
                 float loadingMask = smoothstep(0.35, 0.05, dist);
                 loadingMask = pow(loadingMask, 1.2) * (n * 0.7 + 0.3);
-                
+
                 float mask = mix(ambientMask, loadingMask, loadingState);
-                
+
                 fragColor = vec4(finalCol, mask * mix(0.8, 1.0, loadingState));
             }
-            
+
             void main() {
                 mainImage(gl_FragColor, gl_FragCoord.xy);
             }
         `;
-        
+
         this.uniforms = {
             iTime: { value: 0 },
             iResolution: { value: new THREE.Vector2() },
             intensity: { value: 0.2 },
             loadingState: { value: 0.0 }
         };
-        
+
         const geometry = new THREE.PlaneGeometry(2, 2);
         const material = new THREE.ShaderMaterial({
             fragmentShader,
@@ -867,35 +869,35 @@ class MysticalEngine {
             transparent: true,
             depthWrite: false
         });
-        
+
         const mesh = new THREE.Mesh(geometry, material);
         this.scene.add(mesh);
-        
+
         this.resizeWebGL();
-        
+
         this.clock = new THREE.Clock();
         this.animateWebGL();
     }
-    
+
     resizeWebGL() {
         if (!this.renderer) return;
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
     }
-    
+
     animateWebGL() {
         requestAnimationFrame(() => this.animateWebGL());
         this.uniforms.iTime.value = this.clock.getElapsedTime();
         this.renderer.render(this.scene, this.camera);
     }
-    
+
     setCloudIntensity(high) {
         if (!this.uniforms) return;
         // Tween intensity
         const target = high ? 1.0 : 0.2;
         const current = this.uniforms.intensity.value;
         const step = (target - current) * 0.05;
-        
+
         const tween = () => {
             this.uniforms.intensity.value += step;
             if (Math.abs(this.uniforms.intensity.value - target) > 0.01) {
@@ -913,29 +915,29 @@ class MysticalEngine {
         this.particles = [];
         this.resizeParticleCanvas();
     }
-    
+
     resizeParticleCanvas() {
         this.particleCanvas.width = window.innerWidth;
         this.particleCanvas.height = window.innerHeight;
     }
-    
+
     shatterText(textElement, onComplete) {
         const rect = textElement.getBoundingClientRect();
         const computed = window.getComputedStyle(textElement);
-        
+
         // Save the color before we hide it
         const textColor = computed.color;
-        
+
         if (this.floatingPrompt) {
             this.floatingPrompt.classList.add('shattering');
         }
-        
+
         this.setCloudIntensity(true); // Intensify cloud during processing
-        
+
         // Create a ghost div to hold the characters
         const ghost = document.createElement('div');
         document.body.appendChild(ghost);
-        
+
         // Match styles precisely
         ghost.style.position = 'absolute';
         ghost.style.left = rect.left + 'px';
@@ -954,10 +956,10 @@ class MysticalEngine {
         ghost.style.color = textColor; // Use the saved visible color
         ghost.style.pointerEvents = 'none';
         ghost.style.zIndex = '1000';
-        
+
         const text = textElement.value;
         textElement.style.color = 'transparent'; // hide real text
-        
+
         // Wrap each character in a span
         const spans = [];
         for (let i = 0; i < text.length; i++) {
@@ -969,16 +971,16 @@ class MysticalEngine {
             ghost.appendChild(span);
             spans.push(span);
         }
-        
+
         // Force reflow to calculate positions
         ghost.getBoundingClientRect();
-        
+
         // Record starting absolute positions
         const positions = spans.map(span => {
             const r = span.getBoundingClientRect();
             return { left: r.left, top: r.top, width: r.width, height: r.height };
         });
-        
+
         // Switch to fixed positioning for independent animation
         spans.forEach((span, i) => {
             span.style.position = 'fixed';
@@ -986,56 +988,56 @@ class MysticalEngine {
             span.style.top = positions[i].top + 'px';
             span.style.margin = '0';
         });
-        
+
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
-        
+
         // Animate each character
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 spans.forEach((span, i) => {
                     const dx = cx - positions[i].left - (positions[i].width / 2);
                     const dy = cy - positions[i].top - (positions[i].height / 2);
-                    
+
                     // Wave effect: slight delay based on index
-                    const delay = i * 15; 
+                    const delay = i * 15;
                     span.style.transitionDelay = `${delay}ms`;
-                    
+
                     // Calm, magical scatter: translate to center, scale down slightly, slight rotation
                     const rX = (Math.random() - 0.5) * 40;
                     const rY = (Math.random() - 0.5) * 40;
                     const rRot = (Math.random() - 0.5) * 60;
-                    
+
                     span.style.transform = `translate(${dx + rX}px, ${dy + rY}px) scale(0.3) rotate(${rRot}deg)`;
                     span.style.opacity = '0';
                     span.style.filter = 'blur(3px)';
                 });
             });
         });
-        
+
         // Cleanup
         setTimeout(() => {
             ghost.remove();
         }, 2000 + text.length * 15);
-        
+
         // Allow API call to proceed
-        if (onComplete) setTimeout(onComplete, 500); 
+        if (onComplete) setTimeout(onComplete, 500);
     }
-    
+
     shatterImage(imageElement, onComplete) {
         if (!imageElement) {
             if (onComplete) onComplete();
             return;
         }
-        
+
         const rect = imageElement.getBoundingClientRect();
-        
+
         if (this.floatingPrompt) {
             this.floatingPrompt.classList.add('shattering');
         }
-        
+
         this.setCloudIntensity(true); // Intensify cloud during processing
-        
+
         // Hide entire image preview container smoothly
         const previewContainer = imageElement.closest('.image-preview');
         if (previewContainer) {
@@ -1045,11 +1047,11 @@ class MysticalEngine {
             imageElement.style.transition = 'opacity 0.5s ease';
             imageElement.style.opacity = '0';
         }
-        
+
         const ghost = document.createElement('img');
         ghost.src = imageElement.src;
         document.body.appendChild(ghost);
-        
+
         ghost.style.position = 'fixed';
         ghost.style.left = rect.left + 'px';
         ghost.style.top = rect.top + 'px';
@@ -1060,47 +1062,47 @@ class MysticalEngine {
         ghost.style.transition = 'transform 1.5s cubic-bezier(0.4, 0, 0.2, 1), opacity 1.5s ease, filter 1.5s ease';
         ghost.style.borderRadius = window.getComputedStyle(imageElement).borderRadius;
         ghost.style.objectFit = 'cover';
-        
+
         // Force reflow
         ghost.getBoundingClientRect();
-        
+
         const cx = window.innerWidth / 2;
         const cy = window.innerHeight / 2;
-        
+
         requestAnimationFrame(() => {
             const dx = cx - rect.left - (rect.width / 2);
             const dy = cy - rect.top - (rect.height / 2);
-            
+
             const rRot = (Math.random() - 0.5) * 60;
             ghost.style.transform = `translate(${dx}px, ${dy}px) scale(0.1) rotate(${rRot}deg)`;
             ghost.style.opacity = '0';
             ghost.style.filter = 'blur(10px)';
         });
-        
+
         setTimeout(() => {
             ghost.remove();
         }, 1600);
-        
+
         if (onComplete) setTimeout(onComplete, 500);
     }
-    
+
     animateParticles() {
         // Obsolete: canvas particle engine is replaced by DOM character animation
         return;
     }
-    
+
     // --- CLOUD LOADING ANIMATION ---
     setLoadingState(target) {
         if (!this.uniforms) return;
-        
+
         // Stop any existing tween
         if (this.loadingTween) {
             cancelAnimationFrame(this.loadingTween);
         }
-        
+
         const current = this.uniforms.loadingState.value;
         const step = (target - current) * 0.04; // Smooth transition speed
-        
+
         const tween = () => {
             this.uniforms.loadingState.value += step;
             if (Math.abs(this.uniforms.loadingState.value - target) > 0.01) {
@@ -1178,7 +1180,7 @@ class MysticalEngine {
                 setTimeout(() => b.remove(), 400);
             });
         }
-        
+
         // Return main WebGL cloud to ambient state
         this.setLoadingState(0.0);
 
@@ -1195,7 +1197,7 @@ class MysticalEngine {
             this.resultsSection.classList.add('revealing');
         }
     }
-    
+
     resetInput() {
         if (this.floatingPrompt) {
             this.floatingPrompt.classList.remove('shattering');

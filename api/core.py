@@ -1,21 +1,29 @@
 import base64
+import datetime
 import ipaddress
 import json
 import os
 import re
 import time
-import datetime
-
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 from urllib import error as urllib_error
 from urllib import request as urllib_request
-from urllib.parse import urlparse, urlunparse, urlencode, parse_qsl, parse_qs, unquote, urljoin
+from urllib.parse import (
+    parse_qs,
+    parse_qsl,
+    unquote,
+    urlencode,
+    urljoin,
+    urlparse,
+    urlunparse,
+)
 
 import requests
 from bs4 import BeautifulSoup
 from readability import Document
+
 
 def _get_env_var_insensitive(key: str) -> Optional[str]:
     for k, v in os.environ.items():
@@ -23,13 +31,16 @@ def _get_env_var_insensitive(key: str) -> Optional[str]:
             return v
     return None
 
-GEMINI_API_KEY = _get_env_var_insensitive('GEMINI_API_KEY') or _get_env_var_insensitive('GOOGLE_API_KEY')
+
+GEMINI_API_KEY = _get_env_var_insensitive("GEMINI_API_KEY") or _get_env_var_insensitive(
+    "GOOGLE_API_KEY"
+)
 GEMINI_URL_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 GEMINI_PRIMARY_MODEL = "gemini-2.0-flash"
 GEMINI_FALLBACK_MODELS = ["gemini-2.0-flash-lite"]
 
 # Groq API configuration — primary provider (OpenAI-compatible, higher free-tier RPM)
-GROQ_API_KEY = _get_env_var_insensitive('GROQ_API_KEY')
+GROQ_API_KEY = _get_env_var_insensitive("GROQ_API_KEY")
 GROQ_URL_BASE = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
 GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
@@ -125,14 +136,14 @@ def _try_parse_json_block(s: Optional[str]) -> Optional[Any]:
     end = s.rfind("}")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(s[start:end + 1])
+            return json.loads(s[start : end + 1])
         except Exception:
             pass
     start = s.find("[")
     end = s.rfind("]")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(s[start:end + 1])
+            return json.loads(s[start : end + 1])
         except Exception:
             pass
     return None
@@ -175,7 +186,9 @@ def _is_google_grounding_redirect(url: str) -> bool:
     except Exception:
         return False
     host = parsed.netloc.lower()
-    return host.endswith("vertexaisearch.cloud.google.com") or host.endswith("googleusercontent.com")
+    return host.endswith("vertexaisearch.cloud.google.com") or host.endswith(
+        "googleusercontent.com"
+    )
 
 
 def _source_url_from_title(title: Any) -> Optional[str]:
@@ -209,7 +222,9 @@ def _normalize_source_url(url: str) -> str:
         if not key.lower().startswith("utm_")
         and key.lower() not in {"fbclid", "gclid", "igshid", "mc_cid", "mc_eid"}
     ]
-    return urlunparse(parsed._replace(query=urlencode(query_pairs, doseq=True), fragment=""))
+    return urlunparse(
+        parsed._replace(query=urlencode(query_pairs, doseq=True), fragment="")
+    )
 
 
 def _source_key(url: str) -> str:
@@ -262,7 +277,11 @@ def _extract_grounding_sources(response_data: Dict[str, Any]) -> List[str]:
     candidates = response_data.get("candidates", [])
     if not candidates or not isinstance(candidates[0], dict):
         return []
-    metadata = candidates[0].get("groundingMetadata") or candidates[0].get("grounding_metadata") or {}
+    metadata = (
+        candidates[0].get("groundingMetadata")
+        or candidates[0].get("grounding_metadata")
+        or {}
+    )
     chunks = metadata.get("groundingChunks") or metadata.get("grounding_chunks") or []
     urls: List[str] = []
     for chunk in chunks:
@@ -294,13 +313,15 @@ def _clean_sources(value: Any, fallback: Optional[List[str]] = None) -> List[str
 
 
 def _retry_delay_seconds(attempt: int) -> float:
-    return GEMINI_INITIAL_RETRY_DELAY_SECONDS * (GEMINI_BACKOFF_MULTIPLIER ** attempt)
+    return GEMINI_INITIAL_RETRY_DELAY_SECONDS * (GEMINI_BACKOFF_MULTIPLIER**attempt)
 
 
 def _retry_after_seconds(response: Optional[GeminiResponse]) -> Optional[float]:
     if response is None:
         return None
-    header_value = response.headers.get("Retry-After") or response.headers.get("retry-after")
+    header_value = response.headers.get("Retry-After") or response.headers.get(
+        "retry-after"
+    )
     if header_value:
         try:
             return max(0.0, float(header_value))
@@ -314,7 +335,9 @@ def _retry_after_seconds(response: Optional[GeminiResponse]) -> Optional[float]:
         details = parsed.get("error", {}).get("details", [])
         if isinstance(details, list):
             for detail in details:
-                retry_delay = detail.get("retryDelay") if isinstance(detail, dict) else None
+                retry_delay = (
+                    detail.get("retryDelay") if isinstance(detail, dict) else None
+                )
                 if isinstance(retry_delay, str):
                     match = re.search(r"([\d.]+)s", retry_delay)
                     if match:
@@ -356,7 +379,9 @@ def is_valid_url(url: str) -> bool:
             return False
         try:
             ip = ipaddress.ip_address(hostname)
-            return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+            return not (
+                ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            )
         except ValueError:
             pass
         if hostname.lower() == "localhost" or "." not in hostname:
@@ -389,22 +414,25 @@ def _is_image_like(url: str) -> bool:
     parsed = urlparse(url)
     if re.search(r"\.(jpg|jpeg|png|gif|webp|svg)$", parsed.path, re.I):
         return True
-    return any(host in parsed.netloc for host in [
-        "pbs.twimg.com",
-        "i.redd.it",
-        "preview.redd.it",
-        "external-preview.redd.it",
-        "i.imgur.com",
-        "imgur.com",
-        "cdninstagram.com",
-        "instagram.com",
-        "fbcdn.net",
-        "fbsbx.com",
-        "twimg.com",
-        "media.tumblr.com",
-        "media.discordapp.net",
-        "cdn.discordapp.com",
-    ])
+    return any(
+        host in parsed.netloc
+        for host in [
+            "pbs.twimg.com",
+            "i.redd.it",
+            "preview.redd.it",
+            "external-preview.redd.it",
+            "i.imgur.com",
+            "imgur.com",
+            "cdninstagram.com",
+            "instagram.com",
+            "fbcdn.net",
+            "fbsbx.com",
+            "twimg.com",
+            "media.tumblr.com",
+            "media.discordapp.net",
+            "cdn.discordapp.com",
+        ]
+    )
 
 
 def _is_image_content_type(content_type: str) -> bool:
@@ -423,11 +451,18 @@ def _is_html_content_type(content_type: str) -> bool:
 
 def _remote_url_is_image(url: str) -> bool:
     try:
-        headers = {**DEFAULT_HEADERS, "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"}
+        headers = {
+            **DEFAULT_HEADERS,
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
         resp = requests.head(url, headers=headers, allow_redirects=True, timeout=6)
         if resp.status_code in {405, 403} or resp.status_code >= 500:
-            resp = requests.get(url, headers=headers, allow_redirects=True, timeout=6, stream=True)
-        return resp.status_code < 400 and _is_image_content_type(resp.headers.get("Content-Type", ""))
+            resp = requests.get(
+                url, headers=headers, allow_redirects=True, timeout=6, stream=True
+            )
+        return resp.status_code < 400 and _is_image_content_type(
+            resp.headers.get("Content-Type", "")
+        )
     except Exception:
         return False
 
@@ -440,7 +475,9 @@ def _image_content_key(url: str) -> str:
     return f"{parsed.netloc.lower()}{parsed.path.lower()}"
 
 
-def _filter_image_urls(image_urls: List[str], known_image_urls: Optional[List[str]] = None) -> List[str]:
+def _filter_image_urls(
+    image_urls: List[str], known_image_urls: Optional[List[str]] = None
+) -> List[str]:
     known = set(known_image_urls or [])
     filtered: List[str] = []
     content_keys = set()
@@ -456,14 +493,21 @@ def _filter_image_urls(image_urls: List[str], known_image_urls: Optional[List[st
     return filtered
 
 
-def _download_image_as_data_url(url: str, max_bytes: int = MAX_IMAGE_DOWNLOAD_BYTES) -> Optional[str]:
+def _download_image_as_data_url(
+    url: str, max_bytes: int = MAX_IMAGE_DOWNLOAD_BYTES
+) -> Optional[str]:
     if not url:
         return None
     try:
-        headers = {**DEFAULT_HEADERS, "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8"}
+        headers = {
+            **DEFAULT_HEADERS,
+            "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        }
         resp = requests.get(url, headers=headers, timeout=15, stream=True)
         resp.raise_for_status()
-        content_type = resp.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        content_type = (
+            resp.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        )
         if not _is_image_content_type(content_type):
             return None
 
@@ -518,7 +562,9 @@ def _extract_meta_text(soup: BeautifulSoup) -> Tuple[str, str]:
         if title_tag:
             title = title_tag.get_text(strip=True)
 
-    og_desc = soup.find("meta", property="og:description") or soup.find("meta", attrs={"name": "description"})
+    og_desc = soup.find("meta", property="og:description") or soup.find(
+        "meta", attrs={"name": "description"}
+    )
     if og_desc and og_desc.get("content"):
         description = og_desc["content"].strip()
     else:
@@ -531,8 +577,15 @@ def _extract_meta_text(soup: BeautifulSoup) -> Tuple[str, str]:
 
 def _extract_meta_images(soup: BeautifulSoup, base_url: str) -> List[str]:
     images = []
-    for prop in ["og:image", "og:image:secure_url", "twitter:image", "twitter:image:src"]:
-        meta = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
+    for prop in [
+        "og:image",
+        "og:image:secure_url",
+        "twitter:image",
+        "twitter:image:src",
+    ]:
+        meta = soup.find("meta", property=prop) or soup.find(
+            "meta", attrs={"name": prop}
+        )
         if meta and meta.get("content"):
             images.append(_resolve_url(base_url, meta["content"]))
     return images
@@ -605,7 +658,11 @@ def _looks_blocked(text: str) -> bool:
     replacement_chars = text.count("\ufffd")
     control_chars = sum(1 for ch in text if ord(ch) < 32 and ch not in "\n\r\t")
     binary_noise = replacement_chars > 5 or control_chars > max(10, len(text) * 0.03)
-    return len(text) < 200 or binary_noise or any(marker in lowered for marker in BOILERPLATE_MARKERS)
+    return (
+        len(text) < 200
+        or binary_noise
+        or any(marker in lowered for marker in BOILERPLATE_MARKERS)
+    )
 
 
 def _fetch_html(url: str) -> Tuple[str, str, str]:
@@ -621,7 +678,9 @@ def _fetch_jina_text(url: str) -> Optional[str]:
     try:
         parsed = urlparse(url)
         query = f"?{parsed.query}" if parsed.query else ""
-        wrapped = f"https://r.jina.ai/{parsed.scheme}://{parsed.netloc}{parsed.path}{query}"
+        wrapped = (
+            f"https://r.jina.ai/{parsed.scheme}://{parsed.netloc}{parsed.path}{query}"
+        )
         resp = requests.get(wrapped, headers=DEFAULT_HEADERS, timeout=14)
         text = _clean_text(resp.text)
         if resp.status_code == 200 and len(text) > 200 and not _looks_blocked(text):
@@ -661,7 +720,9 @@ def _unwrap_bing_url(url: str) -> str:
         if encoded.startswith("a1"):
             encoded = encoded[2:]
         padding = "=" * (-len(encoded) % 4)
-        decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode("utf-8", errors="replace")
+        decoded = base64.urlsafe_b64decode((encoded + padding).encode("ascii")).decode(
+            "utf-8", errors="replace"
+        )
         return decoded or url
     except Exception:
         return url
@@ -699,9 +760,13 @@ def _claim_key(text: str) -> str:
     return _clean_text(re.sub(r"^\[Image\]\s*", "", text or "", flags=re.I)).lower()
 
 
-def _rank_search_sources(items: List[Dict[str, str]], max_results: int) -> List[Dict[str, str]]:
+def _rank_search_sources(
+    items: List[Dict[str, str]], max_results: int
+) -> List[Dict[str, str]]:
     social = [item for item in items if _is_social_source_url(item.get("url", ""))]
-    nonsocial = [item for item in items if not _is_social_source_url(item.get("url", ""))]
+    nonsocial = [
+        item for item in items if not _is_social_source_url(item.get("url", ""))
+    ]
     ordered = nonsocial or social
     deduped_urls = _dedupe_sources([item["url"] for item in ordered], max_results)
     by_url = {item["url"]: item for item in ordered}
@@ -732,7 +797,9 @@ def _search_duckduckgo_sources(query: str, max_results: int) -> List[Dict[str, s
                 continue
             title = _clean_text(link.get_text(" ", strip=True))
             snippet_node = node.select_one(".result__snippet")
-            snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+            snippet = _clean_text(
+                snippet_node.get_text(" ", strip=True) if snippet_node else ""
+            )
             items.append({"url": url, "title": title, "snippet": snippet})
             if len(items) >= max_results * 2:
                 break
@@ -765,7 +832,9 @@ def _search_bing_sources(query: str, max_results: int) -> List[Dict[str, str]]:
                 continue
             title = _clean_text(link.get_text(" ", strip=True))
             snippet_node = node.find("p")
-            snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+            snippet = _clean_text(
+                snippet_node.get_text(" ", strip=True) if snippet_node else ""
+            )
             items.append({"url": url, "title": title, "snippet": snippet})
             if len(items) >= max_results * 2:
                 break
@@ -798,7 +867,9 @@ def _search_yahoo_sources(query: str, max_results: int) -> List[Dict[str, str]]:
                 continue
             title = _clean_text(link.get_text(" ", strip=True))
             snippet_node = node.find(class_="compText")
-            snippet = _clean_text(snippet_node.get_text(" ", strip=True) if snippet_node else "")
+            snippet = _clean_text(
+                snippet_node.get_text(" ", strip=True) if snippet_node else ""
+            )
             items.append({"url": url, "title": title, "snippet": snippet})
             if len(items) >= max_results * 2:
                 break
@@ -807,10 +878,19 @@ def _search_yahoo_sources(query: str, max_results: int) -> List[Dict[str, str]]:
         return []
 
 
-def _search_web_sources(query: str, max_results: int = MAX_WEB_EVIDENCE_SOURCES) -> List[Dict[str, str]]:
+def _search_web_sources(
+    query: str, max_results: int = MAX_WEB_EVIDENCE_SOURCES
+) -> List[Dict[str, str]]:
     combined: List[Dict[str, str]] = []
-    for search_fn in (_search_duckduckgo_sources, _search_bing_sources, _search_yahoo_sources):
-        if len(_dedupe_sources([item["url"] for item in combined], max_results)) >= max_results:
+    for search_fn in (
+        _search_duckduckgo_sources,
+        _search_bing_sources,
+        _search_yahoo_sources,
+    ):
+        if (
+            len(_dedupe_sources([item["url"] for item in combined], max_results))
+            >= max_results
+        ):
             break
         combined.extend(search_fn(query, max_results))
     return _rank_search_sources(combined, max_results)
@@ -821,13 +901,19 @@ def _fetch_evidence_page_summary(source: Dict[str, str]) -> Dict[str, str]:
     if not url or _is_social_source_url(url):
         return source
     try:
-        resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=WEB_EVIDENCE_FETCH_TIMEOUT_SECONDS)
-        if resp.status_code >= 400 or not _is_html_content_type(resp.headers.get("Content-Type", "")):
+        resp = requests.get(
+            url, headers=DEFAULT_HEADERS, timeout=WEB_EVIDENCE_FETCH_TIMEOUT_SECONDS
+        )
+        if resp.status_code >= 400 or not _is_html_content_type(
+            resp.headers.get("Content-Type", "")
+        ):
             return source
         soup = BeautifulSoup(resp.text, "lxml")
         title, description = _extract_meta_text(soup)
         body = _extract_body_text(resp.text)
-        summary = _clean_text(" ".join(part for part in [description, body[:900]] if part))
+        summary = _clean_text(
+            " ".join(part for part in [description, body[:900]] if part)
+        )
         if title:
             source["title"] = title
         if summary:
@@ -837,15 +923,21 @@ def _fetch_evidence_page_summary(source: Dict[str, str]) -> Dict[str, str]:
     return source
 
 
-def _gather_web_evidence_for_claims(claims: List[str]) -> Dict[str, List[Dict[str, str]]]:
-    clean_claims = [_clean_search_query(claim) for claim in claims if _clean_search_query(claim)]
+def _gather_web_evidence_for_claims(
+    claims: List[str],
+) -> Dict[str, List[Dict[str, str]]]:
+    clean_claims = [
+        _clean_search_query(claim) for claim in claims if _clean_search_query(claim)
+    ]
     clean_claims = _dedupe(clean_claims)[:MAX_WEB_EVIDENCE_CLAIMS]
     if not clean_claims:
         return {}
 
     evidence: Dict[str, List[Dict[str, str]]] = {}
     with ThreadPoolExecutor(max_workers=min(4, len(clean_claims))) as executor:
-        futures = {executor.submit(_search_web_sources, claim): claim for claim in clean_claims}
+        futures = {
+            executor.submit(_search_web_sources, claim): claim for claim in clean_claims
+        }
         for future in as_completed(futures):
             claim = futures[future]
             try:
@@ -862,7 +954,10 @@ def _gather_web_evidence_for_claims(claims: List[str]) -> Dict[str, List[Dict[st
     if fetch_candidates:
         with ThreadPoolExecutor(max_workers=min(6, len(fetch_candidates))) as executor:
             futures = {
-                executor.submit(_fetch_evidence_page_summary, dict(source)): (claim, index)
+                executor.submit(_fetch_evidence_page_summary, dict(source)): (
+                    claim,
+                    index,
+                )
                 for claim, sources in evidence.items()
                 for index, source in enumerate(sources[:MAX_WEB_EVIDENCE_FETCHES])
             }
@@ -893,7 +988,7 @@ def _has_claim_signal(text: str) -> bool:
         return False
     t = text.lower()
     # Remove noisy tokens that are common in social posts but not claims.
-    t = re.sub(r"https?://\\S+|pic\\.twitter\\.com/\\S+|@\\w+|#\\w+", " ", t)
+    t = re.sub(r"https?://\S+|pic\.twitter\.com/\S+|@\w+|#\w+", " ", t)
     t = _clean_text(t)
     words = t.split()
     if len(words) < 6:
@@ -921,7 +1016,9 @@ def _extract_images_from_html(soup: BeautifulSoup, base_url: str) -> List[str]:
         if not src:
             srcset = img.get("srcset")
             if srcset:
-                parts = [p.strip().split(" ")[0] for p in srcset.split(",") if p.strip()]
+                parts = [
+                    p.strip().split(" ")[0] for p in srcset.split(",") if p.strip()
+                ]
                 if parts:
                     src = parts[-1]
         if src:
@@ -945,7 +1042,9 @@ def _image_detection_info(url: str, text: str, image_urls: List[str]) -> Dict[st
         r"media\.redd\.it",
     ]
     url_has_images = any(re.search(p, url, re.IGNORECASE) for p in image_patterns)
-    text_has_images = any(re.search(p, text or "", re.IGNORECASE) for p in image_patterns)
+    text_has_images = any(
+        re.search(p, text or "", re.IGNORECASE) for p in image_patterns
+    )
     image_detected = bool(image_urls) or url_has_images or text_has_images
     message = ""
     if image_detected and not image_urls:
@@ -978,7 +1077,15 @@ def _reddit_request_candidates(url: str) -> List[str]:
     path = parsed.path.rstrip("/")
     candidates = [_build_reddit_json_url(url)]
     if path:
-        candidates.append(urlunparse(parsed._replace(netloc="api.reddit.com", path=path, query=urlencode({"raw_json": "1"}))))
+        candidates.append(
+            urlunparse(
+                parsed._replace(
+                    netloc="api.reddit.com",
+                    path=path,
+                    query=urlencode({"raw_json": "1"}),
+                )
+            )
+        )
     post_id = _reddit_post_id(url)
     if post_id:
         candidates.append(f"https://www.reddit.com/by_id/t3_{post_id}.json?raw_json=1")
@@ -1022,7 +1129,9 @@ def _extract_reddit_json(url: str) -> Optional[Dict[str, Any]]:
             body = post.get("selftext", "")
             text = _clean_text(f"{title} {body}")
             images: List[str] = []
-            if post.get("url_overridden_by_dest") and _is_image_like(post["url_overridden_by_dest"]):
+            if post.get("url_overridden_by_dest") and _is_image_like(
+                post["url_overridden_by_dest"]
+            ):
                 images.append(post["url_overridden_by_dest"])
             preview = post.get("preview", {}).get("images", [])
             for img in preview:
@@ -1054,13 +1163,19 @@ def _extract_reddit_old_html(url: str) -> Optional[Dict[str, Any]]:
         soup = BeautifulSoup(resp.text, "lxml")
         thing = soup.find(attrs={"data-fullname": f"t3_{post_id}"}) if post_id else None
         if thing is None:
-            thing = soup.find("div", class_=lambda value: value and "thing" in value.split())
+            thing = soup.find(
+                "div", class_=lambda value: value and "thing" in value.split()
+            )
         if thing is None:
             return None
 
-        title_node = thing.find("a", class_=lambda value: value and "title" in value.split())
+        title_node = thing.find(
+            "a", class_=lambda value: value and "title" in value.split()
+        )
         title = title_node.get_text(" ", strip=True) if title_node else ""
-        body_node = soup.find("div", class_=lambda value: value and "usertext-body" in value.split())
+        body_node = soup.find(
+            "div", class_=lambda value: value and "usertext-body" in value.split()
+        )
         body = body_node.get_text(" ", strip=True) if body_node else ""
         text = _clean_text(f"{title} {body}")
         images: List[str] = []
@@ -1080,7 +1195,11 @@ def _extract_reddit_old_html(url: str) -> Optional[Dict[str, Any]]:
 
         if not text and not images:
             return None
-        return {"text": text, "title": title, "images": _dedupe([img for img in images if img])}
+        return {
+            "text": text,
+            "title": title,
+            "images": _dedupe([img for img in images if img]),
+        }
     except Exception:
         return None
 
@@ -1197,7 +1316,11 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
                     if media_url:
                         candidate_images.append(media_url)
                 elif media_type in {"video", "animated_gif"}:
-                    preview = media.get("media_url_https") or media.get("media_url") or media.get("preview_image_url")
+                    preview = (
+                        media.get("media_url_https")
+                        or media.get("media_url")
+                        or media.get("preview_image_url")
+                    )
                     if preview:
                         candidate_images.append(preview)
             if not candidate_images:
@@ -1215,12 +1338,21 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
 
     try:
         api_url = "https://cdn.syndication.twimg.com/widgets/tweet"
-        resp = requests.get(api_url, params={"id": tweet_id, "lang": "en"}, headers=DEFAULT_HEADERS, timeout=10)
+        resp = requests.get(
+            api_url,
+            params={"id": tweet_id, "lang": "en"},
+            headers=DEFAULT_HEADERS,
+            timeout=10,
+        )
         if resp.status_code == 200:
             data = resp.json()
             text = data.get("text") or data.get("full_text") or ""
             user = data.get("user") or {}
-            title = f"Post by @{user.get('screen_name', 'user')}" if user else "Twitter/X post"
+            title = (
+                f"Post by @{user.get('screen_name', 'user')}"
+                if user
+                else "Twitter/X post"
+            )
             candidate_images: List[str] = []
             for photo in data.get("photos", []) or []:
                 if photo.get("url"):
@@ -1250,7 +1382,11 @@ def _extract_twitter(url: str) -> Optional[Dict[str, Any]]:
         if oembed.status_code == 200:
             data = oembed.json()
             html = data.get("html", "")
-            text = BeautifulSoup(html, "lxml").get_text(" ", strip=True) if html else data.get("title", "")
+            text = (
+                BeautifulSoup(html, "lxml").get_text(" ", strip=True)
+                if html
+                else data.get("title", "")
+            )
             _merge_candidate(text, data.get("author_name") or "Twitter/X post", [])
     except Exception:
         pass
@@ -1267,7 +1403,7 @@ def _extract_twitter_media_from_jina(url: str) -> List[str]:
         jina_text = _fetch_jina_text(url)
         if not jina_text:
             return []
-        media_urls = re.findall(r"https?://pbs\\.twimg\\.com/[^\\s)\\]}\"']+", jina_text)
+        media_urls = re.findall(r"https?://pbs\.twimg\.com/[^\s)\]}\"']+", jina_text)
         cleaned = []
         for u in media_urls:
             if "pbs.twimg.com" in u and "?" not in u:
@@ -1293,7 +1429,11 @@ def _extract_twitter_via_proxy(url: str) -> Optional[Dict[str, Any]]:
         tweet = data.get("tweet") or {}
         text = tweet.get("text") or tweet.get("raw_text", {}).get("text") or ""
         author = tweet.get("author") or {}
-        title = f"Post by @{author.get('screen_name')}" if author.get("screen_name") else "Twitter/X post"
+        title = (
+            f"Post by @{author.get('screen_name')}"
+            if author.get("screen_name")
+            else "Twitter/X post"
+        )
         images = []
         media = tweet.get("media") or {}
         for photo in media.get("photos", []) or []:
@@ -1308,12 +1448,21 @@ def _extract_twitter_via_proxy(url: str) -> Optional[Dict[str, Any]]:
 
 
 def _extract_reddit(url: str) -> Optional[Dict[str, Any]]:
-    return _extract_reddit_json(url) or _extract_reddit_old_html(url) or _extract_reddit_unfurled(url)
+    return (
+        _extract_reddit_json(url)
+        or _extract_reddit_old_html(url)
+        or _extract_reddit_unfurled(url)
+    )
 
 
 def _extract_oembed(url: str, endpoint: str) -> Optional[Dict[str, Any]]:
     try:
-        resp = requests.get(endpoint, params={"url": url, "format": "json"}, headers=DEFAULT_HEADERS, timeout=10)
+        resp = requests.get(
+            endpoint,
+            params={"url": url, "format": "json"},
+            headers=DEFAULT_HEADERS,
+            timeout=10,
+        )
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -1387,7 +1536,9 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
         jsonld_text = _extract_jsonld_text(jsonld_items)
 
         body_text = _extract_body_text(html)
-        if not prefer_extracted and (not text_content or len(text_content.strip()) < 80):
+        if not prefer_extracted and (
+            not text_content or len(text_content.strip()) < 80
+        ):
             if not _looks_blocked(body_text):
                 text_content = body_text
             elif jsonld_text:
@@ -1430,18 +1581,33 @@ def extract_content_from_url(url: str) -> Dict[str, Any]:
 
 
 class FactChecker:
-    def __init__(self, api_key: Optional[str] = None, groq_api_key: Optional[str] = None):
+    def __init__(
+        self, api_key: Optional[str] = None, groq_api_key: Optional[str] = None
+    ):
         # Gemini key (fallback provider)
-        resolved_gemini = api_key or _get_env_var_insensitive("GEMINI_API_KEY") or GEMINI_API_KEY or _get_env_var_insensitive("GOOGLE_API_KEY") or ""
+        resolved_gemini = (
+            api_key
+            or _get_env_var_insensitive("GEMINI_API_KEY")
+            or GEMINI_API_KEY
+            or _get_env_var_insensitive("GOOGLE_API_KEY")
+            or ""
+        )
         self.gemini_api_key = resolved_gemini.strip()
 
         # Groq key (primary provider — higher RPM, dedicated LPU hardware)
-        resolved_groq = groq_api_key or _get_env_var_insensitive("GROQ_API_KEY") or GROQ_API_KEY or ""
+        resolved_groq = (
+            groq_api_key
+            or _get_env_var_insensitive("GROQ_API_KEY")
+            or GROQ_API_KEY
+            or ""
+        )
         self.groq_api_key = resolved_groq.strip()
 
         # At least one provider must be configured
         if not self.gemini_api_key and not self.groq_api_key:
-            raise ValueError("No API key configured. Set GROQ_API_KEY and/or GEMINI_API_KEY.")
+            raise ValueError(
+                "No API key configured. Set GROQ_API_KEY and/or GEMINI_API_KEY."
+            )
 
         # Keep legacy attribute for compatibility with _analyze_single_image_url
         self.api_key = self.gemini_api_key or self.groq_api_key
@@ -1453,7 +1619,9 @@ class FactChecker:
         self.last_text_error = ""
 
     @staticmethod
-    def _translate_messages_to_contents(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _translate_messages_to_contents(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         """Convert OpenAI-style messages to native Gemini 'contents' format."""
         contents = []
         for msg in messages:
@@ -1471,14 +1639,37 @@ class FactChecker:
                             image_url = item.get("image_url", {}).get("url", "")
                             if image_url.startswith("data:"):
                                 # Parse data URL: data:mime;base64,DATA
-                                match = re.match(r"data:([^;]+);base64,(.+)", image_url, re.DOTALL)
+                                match = re.match(
+                                    r"data:([^;]+);base64,(.+)", image_url, re.DOTALL
+                                )
                                 if match:
                                     mime_type = match.group(1)
                                     b64_data = match.group(2)
-                                    parts.append({"inline_data": {"mime_type": mime_type, "data": b64_data}})
+                                    parts.append(
+                                        {
+                                            "inline_data": {
+                                                "mime_type": mime_type,
+                                                "data": b64_data,
+                                            }
+                                        }
+                                    )
                             else:
                                 # Remote URL — use file_data for Gemini
-                                parts.append({"file_data": {"mime_type": "image/jpeg", "file_uri": image_url}})
+                                mime_type = "image/jpeg"
+                                if image_url.lower().endswith(".png"):
+                                    mime_type = "image/png"
+                                elif image_url.lower().endswith(".gif"):
+                                    mime_type = "image/gif"
+                                elif image_url.lower().endswith(".webp"):
+                                    mime_type = "image/webp"
+                                parts.append(
+                                    {
+                                        "file_data": {
+                                            "mime_type": mime_type,
+                                            "file_uri": image_url,
+                                        }
+                                    }
+                                )
                 if parts:
                     contents.append({"role": role, "parts": parts})
         return contents
@@ -1496,19 +1687,18 @@ class FactChecker:
             text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
             grounding_sources = _extract_grounding_sources(data)
             # Return in OpenAI-compatible format so all downstream parsing works unchanged
-            return json.dumps({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": text
-                    }
-                }],
-                "grounding_sources": grounding_sources,
-            })
+            return json.dumps(
+                {
+                    "choices": [{"message": {"role": "assistant", "content": text}}],
+                    "grounding_sources": grounding_sources,
+                }
+            )
         except Exception:
             return body
 
-    def _post_gemini(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS) -> Optional[GeminiResponse]:
+    def _post_gemini(
+        self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS
+    ) -> Optional[GeminiResponse]:
         """Call native Gemini API with retry and model fallback on ANY non-200."""
         last_response: Optional[GeminiResponse] = None
         last_error: Optional[str] = None
@@ -1524,13 +1714,18 @@ class FactChecker:
         # CRITICAL: Gemini does NOT support response_mime_type together with tools
         # (googleSearch). When search is enabled, we ask for JSON in the prompt instead.
         generation_config: Dict[str, Any] = {}
-        if payload.get("response_format", {}).get("type") == "json_object" and not use_search:
+        if (
+            payload.get("response_format", {}).get("type") == "json_object"
+            and not use_search
+        ):
             generation_config["response_mime_type"] = "application/json"
         # Disable thinking on 2.5+ models for speed — we don't need reasoning traces
         # (thinkingConfig is silently ignored by models that don't support it)
 
         for model_index, model in enumerate(models):
-            api_url = f"{GEMINI_URL_BASE}/{model}:generateContent?key={self.gemini_api_key}"
+            api_url = (
+                f"{GEMINI_URL_BASE}/{model}:generateContent?key={self.gemini_api_key}"
+            )
             native_payload = {"contents": contents}
             if generation_config:
                 native_payload["generationConfig"] = generation_config
@@ -1546,19 +1741,29 @@ class FactChecker:
                         headers=self.headers,
                         method="POST",
                     )
-                    with urllib_request.urlopen(req, timeout=UPSTREAM_TIMEOUT_SECONDS) as upstream:
+                    with urllib_request.urlopen(
+                        req, timeout=UPSTREAM_TIMEOUT_SECONDS
+                    ) as upstream:
                         body = upstream.read().decode("utf-8", errors="replace")
                         status_code = int(getattr(upstream, "status", 200))
                         # Translate native response to OpenAI-compatible format
                         translated_body = self._translate_native_response(body)
-                        response = GeminiResponse(status_code=status_code, body=translated_body, headers=dict(upstream.headers))
+                        response = GeminiResponse(
+                            status_code=status_code,
+                            body=translated_body,
+                            headers=dict(upstream.headers),
+                        )
                 except urllib_error.HTTPError as err:
                     body = ""
                     try:
                         body = err.read().decode("utf-8", errors="replace")
                     except Exception:
                         body = ""
-                    response = GeminiResponse(status_code=int(err.code), body=body, headers=dict(err.headers or {}))
+                    response = GeminiResponse(
+                        status_code=int(err.code),
+                        body=body,
+                        headers=dict(err.headers or {}),
+                    )
                 except Exception as err:
                     last_error = f"{type(err).__name__}: {err}"
                     response = None
@@ -1577,7 +1782,11 @@ class FactChecker:
                         break
                 if attempt < retries - 1:
                     retry_after = _retry_after_seconds(last_response)
-                    delay = retry_after if retry_after is not None else _retry_delay_seconds(attempt)
+                    delay = (
+                        retry_after
+                        if retry_after is not None
+                        else _retry_delay_seconds(attempt)
+                    )
                     delay = min(delay, MAX_GEMINI_RETRY_DELAY_SECONDS)
                     time.sleep(delay)
             if model_failed and model_index < len(models) - 1:
@@ -1588,7 +1797,12 @@ class FactChecker:
             return GeminiResponse(status_code=0, body=json.dumps({"error": last_error}))
         return last_response
 
-    def _post_groq(self, payload: Dict[str, Any], retries: int = GEMINI_RETRY_ATTEMPTS, use_vision: bool = False) -> Optional[GeminiResponse]:
+    def _post_groq(
+        self,
+        payload: Dict[str, Any],
+        retries: int = GEMINI_RETRY_ATTEMPTS,
+        use_vision: bool = False,
+    ) -> Optional[GeminiResponse]:
         """Call Groq API (OpenAI-compatible) with retry and model fallback."""
         if not self.groq_api_key:
             return None
@@ -1627,18 +1841,28 @@ class FactChecker:
                         headers=headers,
                         method="POST",
                     )
-                    with urllib_request.urlopen(req, timeout=UPSTREAM_TIMEOUT_SECONDS) as upstream:
+                    with urllib_request.urlopen(
+                        req, timeout=UPSTREAM_TIMEOUT_SECONDS
+                    ) as upstream:
                         body = upstream.read().decode("utf-8", errors="replace")
                         status_code = int(getattr(upstream, "status", 200))
                         # Groq responses are already in OpenAI format — no translation needed
-                        response = GeminiResponse(status_code=status_code, body=body, headers=dict(upstream.headers))
+                        response = GeminiResponse(
+                            status_code=status_code,
+                            body=body,
+                            headers=dict(upstream.headers),
+                        )
                 except urllib_error.HTTPError as err:
                     body = ""
                     try:
                         body = err.read().decode("utf-8", errors="replace")
                     except Exception:
                         body = ""
-                    response = GeminiResponse(status_code=int(err.code), body=body, headers=dict(err.headers or {}))
+                    response = GeminiResponse(
+                        status_code=int(err.code),
+                        body=body,
+                        headers=dict(err.headers or {}),
+                    )
                 except Exception as err:
                     last_error = f"{type(err).__name__}: {err}"
                     response = None
@@ -1655,7 +1879,11 @@ class FactChecker:
                         break
                 if attempt < retries - 1:
                     retry_after = _retry_after_seconds(last_response)
-                    delay = retry_after if retry_after is not None else _retry_delay_seconds(attempt)
+                    delay = (
+                        retry_after
+                        if retry_after is not None
+                        else _retry_delay_seconds(attempt)
+                    )
                     delay = min(delay, MAX_GEMINI_RETRY_DELAY_SECONDS)
                     time.sleep(delay)
             if model_failed and model_index < len(models) - 1:
@@ -1697,7 +1925,9 @@ class FactChecker:
                 return response
             # Gemini failed — fall back to Groq without search
             if self.groq_api_key:
-                fallback_payload = {k: v for k, v in payload.items() if k != "use_web_search"}
+                fallback_payload = {
+                    k: v for k, v in payload.items() if k != "use_web_search"
+                }
                 response = self._post_groq(fallback_payload, use_vision=use_vision)
                 if response is not None and response.status_code == 200:
                     return response
@@ -1720,7 +1950,11 @@ class FactChecker:
 
     def _rate_limit_pause(self):
         """Brief pause between API calls to respect free-tier RPM limits."""
-        delay = GROQ_INTER_REQUEST_DELAY if self.groq_api_key else GEMINI_INTER_REQUEST_DELAY
+        delay = (
+            GROQ_INTER_REQUEST_DELAY
+            if self.groq_api_key
+            else GEMINI_INTER_REQUEST_DELAY
+        )
         time.sleep(delay)
 
     def extract_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[str]:
@@ -1809,7 +2043,9 @@ class FactChecker:
         try:
             response_json = response.json()
             content = response_json["choices"][0]["message"]["content"]
-            grounding_sources = _clean_sources(response_json.get("grounding_sources", []))
+            grounding_sources = _clean_sources(
+                response_json.get("grounding_sources", [])
+            )
         except Exception:
             return {
                 "verdict": "ERROR",
@@ -1822,10 +2058,14 @@ class FactChecker:
             urls: List[str] = []
             if isinstance(parsed.get("sources"), list):
                 for item in parsed["sources"]:
-                    if isinstance(item, str) and re.match(r"^https?://", item.strip(), flags=re.I):
+                    if isinstance(item, str) and re.match(
+                        r"^https?://", item.strip(), flags=re.I
+                    ):
                         urls.append(item.strip())
             if not urls and isinstance(parsed.get("explanation"), str):
-                urls = re.findall(r"https?://[^\s)\]}]+", parsed["explanation"], flags=re.I)
+                urls = re.findall(
+                    r"https?://[^\s)\]}]+", parsed["explanation"], flags=re.I
+                )
             parsed["sources"] = _clean_sources(urls, grounding_sources)
             conf_val = parsed.get("confidence", 75)
             if isinstance(conf_val, str):
@@ -1851,7 +2091,9 @@ class FactChecker:
             "sources": _clean_sources(urls, grounding_sources),
         }
 
-    def fact_check_text_claims(self, text: str, max_claims: int = MAX_CLAIMS) -> List[Dict[str, Any]]:
+    def fact_check_text_claims(
+        self, text: str, max_claims: int = MAX_CLAIMS
+    ) -> List[Dict[str, Any]]:
         self.last_text_error = ""
         if not text:
             return []
@@ -1869,7 +2111,7 @@ class FactChecker:
             '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
             "Confidence must be an integer from 1 to 100. "
             "Even if the text is short or conversational, identify the core premise and fact-check it. "
-            "Only return {\"claims\":[]} if absolutely no claim can be derived.\n\n"
+            'Only return {"claims":[]} if absolutely no claim can be derived.\n\n'
             f"Text to analyze: {clipped}"
         )
 
@@ -1882,15 +2124,21 @@ class FactChecker:
         response = self._post_api(payload)
         if response is None or response.status_code != 200:
             error_msg = _extract_error_message(response)
-            print(f"DEBUG: Gemini API Error ({response.status_code if response else 'None'}): {error_msg}")
+            print(
+                f"DEBUG: Gemini API Error ({response.status_code if response else 'None'}): {error_msg}"
+            )
             self.last_text_error = error_msg
             return []
         try:
             response_json = response.json()
             content = response_json["choices"][0]["message"]["content"]
-            grounding_sources = _clean_sources(response_json.get("grounding_sources", []))
+            grounding_sources = _clean_sources(
+                response_json.get("grounding_sources", [])
+            )
         except Exception:
-            self.last_text_error = "Upstream returned an unreadable text analysis response"
+            self.last_text_error = (
+                "Upstream returned an unreadable text analysis response"
+            )
             return []
 
         parsed = _try_parse_json_block(content)
@@ -1901,24 +2149,34 @@ class FactChecker:
                 claim_items = parsed["claims"]
             elif isinstance(parsed.get("claims"), dict):
                 claim_items = [parsed["claims"]]
-            elif parsed.get("claim") or parsed.get("verdict") or parsed.get("explanation"):
+            elif (
+                parsed.get("claim")
+                or parsed.get("verdict")
+                or parsed.get("explanation")
+            ):
                 claim_items = [parsed]
             else:
                 claim_items = []
         else:
             fallback_text = _clean_text(content)
-            if not fallback_text or fallback_text.lower() in {"none", "no claims", "no factual claims"}:
+            if not fallback_text or fallback_text.lower() in {
+                "none",
+                "no claims",
+                "no factual claims",
+            }:
                 return []
             urls = re.findall(r"https?://[^\s)\]}]+", content, flags=re.I)
-            return [{
-                "claim": "Text claim analysis",
-                "result": {
-                    "verdict": "ANALYSIS COMPLETE",
-                    "confidence": 60,
-                    "explanation": fallback_text,
-                    "sources": _clean_sources(urls, grounding_sources),
-                },
-            }]
+            return [
+                {
+                    "claim": "Text claim analysis",
+                    "result": {
+                        "verdict": "ANALYSIS COMPLETE",
+                        "confidence": 60,
+                        "explanation": fallback_text,
+                        "sources": _clean_sources(urls, grounding_sources),
+                    },
+                }
+            ]
         if not isinstance(claim_items, list):
             return []
 
@@ -1928,23 +2186,31 @@ class FactChecker:
                 continue
             claim = _clean_text(str(item.get("claim", "")))
             if not claim:
-                claim = _clean_text(str(item.get("statement", "") or item.get("text", "")))
+                claim = _clean_text(
+                    str(item.get("statement", "") or item.get("text", ""))
+                )
             if not claim and item.get("explanation"):
                 claim = "Text claim analysis"
             if not claim:
                 continue
-            results.append({
-                "claim": claim,
-                "result": {
-                    "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
-                    "confidence": _coerce_confidence(item.get("confidence", 75)),
-                    "explanation": item.get("explanation", "Analysis completed"),
-                    "sources": _clean_sources(item.get("sources", []), grounding_sources),
-                },
-            })
+            results.append(
+                {
+                    "claim": claim,
+                    "result": {
+                        "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
+                        "confidence": _coerce_confidence(item.get("confidence", 75)),
+                        "explanation": item.get("explanation", "Analysis completed"),
+                        "sources": _clean_sources(
+                            item.get("sources", []), grounding_sources
+                        ),
+                    },
+                }
+            )
         return results
 
-    def refine_results_with_web_evidence(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def refine_results_with_web_evidence(
+        self, results: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
         """Search the public web for each claim and rerank/rewrite verdicts against evidence snippets."""
         self.last_text_error = ""
         claims = [
@@ -1968,12 +2234,14 @@ class FactChecker:
             evidence = evidence_by_claim.get(clean_claim, [])
             if not evidence:
                 continue
-            evidence_payload.append({
-                "claim": item["claim"],
-                "current_verdict": item.get("result", {}).get("verdict"),
-                "current_explanation": item.get("result", {}).get("explanation"),
-                "evidence": evidence[:MAX_WEB_EVIDENCE_SOURCES],
-            })
+            evidence_payload.append(
+                {
+                    "claim": item["claim"],
+                    "current_verdict": item.get("result", {}).get("verdict"),
+                    "current_explanation": item.get("result", {}).get("explanation"),
+                    "evidence": evidence[:MAX_WEB_EVIDENCE_SOURCES],
+                }
+            )
 
         if not evidence_payload:
             return results
@@ -2003,7 +2271,9 @@ class FactChecker:
             try:
                 content = response.json()["choices"][0]["message"]["content"]
                 parsed = _try_parse_json_block(content)
-                claim_items = parsed.get("claims", []) if isinstance(parsed, dict) else parsed
+                claim_items = (
+                    parsed.get("claims", []) if isinstance(parsed, dict) else parsed
+                )
                 if isinstance(claim_items, dict):
                     claim_items = [claim_items]
                 if isinstance(claim_items, list):
@@ -2017,7 +2287,11 @@ class FactChecker:
 
         refined: List[Dict[str, Any]] = []
         for item in results:
-            if not isinstance(item, dict) or not item.get("claim") or not isinstance(item.get("result"), dict):
+            if (
+                not isinstance(item, dict)
+                or not item.get("claim")
+                or not isinstance(item.get("result"), dict)
+            ):
                 refined.append(item)
                 continue
             update = updates.get(_claim_key(item["claim"]))
@@ -2027,18 +2301,37 @@ class FactChecker:
                 item = {
                     "claim": item["claim"],
                     "result": {
-                        "verdict": update.get("verdict", item["result"].get("verdict", "INSUFFICIENT EVIDENCE")),
-                        "confidence": _coerce_confidence(update.get("confidence", item["result"].get("confidence", 75))),
-                        "explanation": update.get("explanation", item["result"].get("explanation", "Analysis completed")),
-                        "sources": _dedupe_sources(model_sources + evidence_sources, MAX_WEB_EVIDENCE_SOURCES),
+                        "verdict": update.get(
+                            "verdict",
+                            item["result"].get("verdict", "INSUFFICIENT EVIDENCE"),
+                        ),
+                        "confidence": _coerce_confidence(
+                            update.get(
+                                "confidence", item["result"].get("confidence", 75)
+                            )
+                        ),
+                        "explanation": update.get(
+                            "explanation",
+                            item["result"].get("explanation", "Analysis completed"),
+                        ),
+                        "sources": _dedupe_sources(
+                            model_sources + evidence_sources, MAX_WEB_EVIDENCE_SOURCES
+                        ),
                     },
                 }
-            elif evidence_sources and not _clean_sources(item["result"].get("sources", [])):
+            elif evidence_sources and not _clean_sources(
+                item["result"].get("sources", [])
+            ):
                 item["result"]["sources"] = evidence_sources
             refined.append(item)
         return refined
 
-    def extract_image_claims(self, image_url: Optional[str], image_data_url: Optional[str], max_claims: int = MAX_IMAGE_CLAIMS) -> List[str]:
+    def extract_image_claims(
+        self,
+        image_url: Optional[str],
+        image_data_url: Optional[str],
+        max_claims: int = MAX_IMAGE_CLAIMS,
+    ) -> List[str]:
         self.last_image_error = ""
         if not image_url and not image_data_url:
             return []
@@ -2065,9 +2358,13 @@ class FactChecker:
             }
         ]
         if image_data_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_data_url}})
+            messages[0]["content"].append(
+                {"type": "image_url", "image_url": {"url": image_data_url}}
+            )
         else:
-            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
+            messages[0]["content"].append(
+                {"type": "image_url", "image_url": {"url": image_url}}
+            )
 
         payload = {
             "model": GEMINI_PRIMARY_MODEL,
@@ -2090,7 +2387,9 @@ class FactChecker:
             line = line.strip().lstrip("-*")
             if re.match(r"^\d+[\).]", line):
                 line = re.sub(r"^\d+[\).]\s*", "", line).strip()
-            if re.match(r"^(here are|factual claims|claims from the image)\b", line, flags=re.I):
+            if re.match(
+                r"^(here are|factual claims|claims from the image)\b", line, flags=re.I
+            ):
                 continue
             if line:
                 claims.append(line)
@@ -2127,16 +2426,20 @@ class FactChecker:
                             '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE|UNVERIFIABLE",'
                             '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
                             "Sources must be full http(s) URLs when available. "
-                            "Only return {\"claims\":[]} if absolutely no text or factual assertion is present."
+                            'Only return {"claims":[]} if absolutely no text or factual assertion is present.'
                         ),
                     }
                 ],
             }
         ]
         if image_data_url:
-            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_data_url}})
+            messages[0]["content"].append(
+                {"type": "image_url", "image_url": {"url": image_data_url}}
+            )
         else:
-            messages[0]["content"].append({"type": "image_url", "image_url": {"url": image_url}})
+            messages[0]["content"].append(
+                {"type": "image_url", "image_url": {"url": image_url}}
+            )
 
         payload = {
             "model": GEMINI_PRIMARY_MODEL,
@@ -2151,7 +2454,9 @@ class FactChecker:
         try:
             response_json = response.json()
             content = response_json["choices"][0]["message"]["content"]
-            grounding_sources = _clean_sources(response_json.get("grounding_sources", []))
+            grounding_sources = _clean_sources(
+                response_json.get("grounding_sources", [])
+            )
         except Exception:
             self.last_image_error = "Upstream returned an unreadable vision response"
             return []
@@ -2164,24 +2469,34 @@ class FactChecker:
                 claim_items = parsed["claims"]
             elif isinstance(parsed.get("claims"), dict):
                 claim_items = [parsed["claims"]]
-            elif parsed.get("claim") or parsed.get("verdict") or parsed.get("explanation"):
+            elif (
+                parsed.get("claim")
+                or parsed.get("verdict")
+                or parsed.get("explanation")
+            ):
                 claim_items = [parsed]
             else:
                 claim_items = []
         else:
             fallback_text = _clean_text(content)
-            if not fallback_text or fallback_text.lower() in {"none", "no claims", "no factual claims"}:
+            if not fallback_text or fallback_text.lower() in {
+                "none",
+                "no claims",
+                "no factual claims",
+            }:
                 return []
             urls = re.findall(r"https?://[^\s)\]}]+", content, flags=re.I)
-            return [{
-                "claim": "[Image] Visual claim analysis",
-                "result": {
-                    "verdict": "ANALYSIS COMPLETE",
-                    "confidence": 60,
-                    "explanation": fallback_text,
-                    "sources": _clean_sources(urls, grounding_sources),
-                },
-            }]
+            return [
+                {
+                    "claim": "[Image] Visual claim analysis",
+                    "result": {
+                        "verdict": "ANALYSIS COMPLETE",
+                        "confidence": 60,
+                        "explanation": fallback_text,
+                        "sources": _clean_sources(urls, grounding_sources),
+                    },
+                }
+            ]
         if not isinstance(claim_items, list):
             return []
 
@@ -2191,20 +2506,28 @@ class FactChecker:
                 continue
             claim = _clean_text(str(item.get("claim", "")))
             if not claim:
-                claim = _clean_text(str(item.get("statement", "") or item.get("text", "")))
+                claim = _clean_text(
+                    str(item.get("statement", "") or item.get("text", ""))
+                )
             if not claim and item.get("explanation"):
                 claim = "Visual claim analysis"
             if not claim:
                 continue
-            results.append({
-                "claim": f"[Image] {claim}",
-                "result": {
-                    "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
-                    "confidence": _coerce_confidence(item.get("confidence", 75)),
-                    "explanation": item.get("explanation", "Visual analysis completed"),
-                    "sources": _clean_sources(item.get("sources", []), grounding_sources),
-                },
-            })
+            results.append(
+                {
+                    "claim": f"[Image] {claim}",
+                    "result": {
+                        "verdict": item.get("verdict", "INSUFFICIENT EVIDENCE"),
+                        "confidence": _coerce_confidence(item.get("confidence", 75)),
+                        "explanation": item.get(
+                            "explanation", "Visual analysis completed"
+                        ),
+                        "sources": _clean_sources(
+                            item.get("sources", []), grounding_sources
+                        ),
+                    },
+                }
+            )
         return results
 
 
@@ -2218,7 +2541,10 @@ def _get_checker() -> Tuple[Optional[FactChecker], Optional[str]]:
 def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "No API key configured (set GROQ_API_KEY and/or GEMINI_API_KEY)"}, 500
+        return {
+            "error": checker_error
+            or "No API key configured (set GROQ_API_KEY and/or GEMINI_API_KEY)"
+        }, 500
     text = _clean_text(text)
     if not text:
         return {"error": "No text provided"}, 400
@@ -2238,7 +2564,9 @@ def fact_check_text_input(text: str) -> Tuple[Dict[str, Any], int]:
     return response, 200
 
 
-def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[str]) -> Tuple[Dict[str, Any], int]:
+def fact_check_image_input(
+    image_data_url: Optional[str], image_url: Optional[str]
+) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
         return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
@@ -2247,7 +2575,9 @@ def fact_check_image_input(image_data_url: Optional[str], image_url: Optional[st
     if not image_data_url and image_url:
         image_data_url = _download_image_as_data_url(image_url)
 
-    results = checker.fact_check_image_content(image_url=image_url, image_data_url=image_data_url)
+    results = checker.fact_check_image_content(
+        image_url=image_url, image_data_url=image_data_url
+    )
     if results and hasattr(checker, "refine_results_with_web_evidence"):
         results = checker.refine_results_with_web_evidence(results)
     image_analysis_error = checker.last_image_error
@@ -2295,7 +2625,9 @@ def _analyze_single_image_url(api_key: str, image_url: str) -> Dict[str, Any]:
         }
 
 
-def _analyze_image_urls_with_queue(checker: FactChecker, image_urls: List[str]) -> List[Dict[str, Any]]:
+def _analyze_image_urls_with_queue(
+    checker: FactChecker, image_urls: List[str]
+) -> List[Dict[str, Any]]:
     """Analyze images sequentially to avoid rate-limit exhaustion on free tier."""
     candidates = [url for url in image_urls[:MAX_IMAGES_TO_ANALYZE] if url]
     if not candidates:
@@ -2310,13 +2642,15 @@ def _analyze_image_urls_with_queue(checker: FactChecker, image_urls: List[str]) 
             result = _analyze_single_image_url(checker.api_key, image_url)
             results.append(result)
         except Exception as exc:
-            results.append({
-                "image_url": image_url,
-                "status": "failed",
-                "reason": f"{type(exc).__name__}: {exc}",
-                "claims": [],
-                "checks": [],
-            })
+            results.append(
+                {
+                    "image_url": image_url,
+                    "status": "failed",
+                    "reason": f"{type(exc).__name__}: {exc}",
+                    "claims": [],
+                    "checks": [],
+                }
+            )
 
     return results
 
@@ -2353,16 +2687,18 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     image_analysis_skipped_reason = ""
     should_analyze_images = bool(image_urls) and not _has_substantial_article_text(text)
     if image_urls and not should_analyze_images:
-        image_analysis_skipped_reason = (
-            "Visual analysis skipped because article text was available; image analysis is reserved for image-first posts."
-        )
+        image_analysis_skipped_reason = "Visual analysis skipped because article text was available; image analysis is reserved for image-first posts."
     if should_analyze_images:
         image_analysis_results = _analyze_image_urls_with_queue(checker, image_urls)
         for image_result in image_analysis_results:
             checks = image_result.get("checks", [])
             if isinstance(checks, list):
                 for item in checks:
-                    if isinstance(item, dict) and item.get("claim") and item.get("result"):
+                    if (
+                        isinstance(item, dict)
+                        and item.get("claim")
+                        and item.get("result")
+                    ):
                         results.append(item)
 
     if results and hasattr(checker, "refine_results_with_web_evidence"):
@@ -2372,7 +2708,9 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     for item in results:
         result = item.get("result") if isinstance(item, dict) else None
         if isinstance(result, dict):
-            result["sources"] = _dedupe_sources(_clean_sources(result.get("sources", [])) + source_fallback)
+            result["sources"] = _dedupe_sources(
+                _clean_sources(result.get("sources", [])) + source_fallback
+            )
 
     response = {
         "original_text": text,
@@ -2401,7 +2739,10 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
             for item in image_analysis_results
             if item.get("status") == "failed" and item.get("reason")
         ]
-        if not any(item.get("claim", "").startswith("[Image]") for item in results) and image_analysis_errors:
+        if (
+            not any(item.get("claim", "").startswith("[Image]") for item in results)
+            and image_analysis_errors
+        ):
             response["image_analysis_error"] = image_analysis_errors[0]
 
     return response, 200

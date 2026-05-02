@@ -39,13 +39,13 @@ AI Fact Checker is a tool I built to verify online claims, articles, and images.
 ### Setup
 1. **Clone the repository**:
    ```bash
-   git clone [https://github.com/adunboxthetech/AI-fact-checker.git](https://github.com/adunboxthetech/AI-fact-checker.git)
+   git clone https://github.com/adunboxthetech/AI-fact-checker.git
    cd AI-fact-checker
    ```
 
 2. **Install dependencies**:
    
-```bash
+   ```bash
    pip install -r requirements.txt
    ```
 
