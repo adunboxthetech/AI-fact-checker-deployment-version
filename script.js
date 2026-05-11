@@ -124,7 +124,9 @@ class FactCheckerApp {
         this.imagePreview.innerHTML = `
             <div class="thumb">
                 <img src="${this.escapeAttribute(dataUrl)}" alt="Uploaded image preview" />
-                <button class="remove" aria-label="Remove image">Remove</button>
+                <button class="remove" type="button" aria-label="Remove image" title="Remove image">
+                    <i class="fas fa-xmark" aria-hidden="true"></i>
+                </button>
             </div>
         `;
         this.imagePreview.querySelector('.remove').addEventListener('click', () => {
