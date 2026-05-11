@@ -1,0 +1,487 @@
+/* ===== AI Fact Checker Extension — Aligned with main-app mystical UI ===== */
+
+/* Fonts (loaded from Google in popup.html) */
+
+/* Reset */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Theme tokens — mirrors main app dark theme */
+:root {
+  --bg: #050505;
+  --bg-secondary: #0f0f11;
+  --text-main: #f4f4f5;
+  --text-muted: #a1a1aa;
+
+  --glass-bg: rgba(20, 20, 25, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+
+  --primary: #818cf8;
+  --primary-hover: #a5b4fc;
+  --grad-1: rgba(99, 102, 241, 0.35);
+  --grad-2: rgba(139, 92, 246, 0.25);
+  --grad-3: rgba(59, 130, 246, 0.15);
+
+  --true: #34d399;
+  --false: #f87171;
+  --partial: #fbbf24;
+
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+}
+
+body {
+  width: 400px;
+  min-height: 520px;
+  margin: 0;
+  color: var(--text-main);
+  background:
+    radial-gradient(ellipse at 20% 0%, var(--grad-1), transparent 55%),
+    radial-gradient(ellipse at 80% 100%, var(--grad-2), transparent 50%),
+    var(--bg);
+  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+  font-family: "Outfit", system-ui, sans-serif;
+}
+
+button, input {
+  font: inherit;
+}
+
+/* ===== Shell ===== */
+.shell {
+  display: flex;
+  min-height: 520px;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px;
+}
+
+/* ===== Top Bar ===== */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+h1 {
+  font-size: 1.2rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--text-main), var(--text-muted));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+p { margin: 0; }
+
+#statusText {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 400;
+}
+
+/* Settings gear button */
+.icon-button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  transition: all 0.25s ease;
+}
+
+.icon-button:hover {
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: rotate(30deg);
+}
+
+/* ===== Glass card base ===== */
+.settings,
+.post-card,
+.loading-card,
+.results {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--glass-shadow);
+  animation: card-enter 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ===== Settings Panel ===== */
+.settings {
+  padding: 14px;
+}
+
+.settings label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setting-row input {
+  min-width: 0;
+  flex: 1;
+  height: 36px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.85rem;
+  transition: border-color 0.2s ease;
+}
+
+.setting-row input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.15);
+}
+
+.setting-row button {
+  height: 36px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 0 16px;
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), #a855f7);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.85rem;
+  transition: all 0.25s ease;
+}
+
+.setting-row button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+}
+
+/* ===== Post Card ===== */
+.post-card {
+  padding: 14px;
+}
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+#platformBadge {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 230px;
+  align-items: center;
+  border: 1px solid rgba(129, 140, 248, 0.2);
+  border-radius: 999px;
+  padding: 4px 12px;
+  color: var(--primary);
+  background: rgba(129, 140, 248, 0.08);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.82rem;
+  transition: color 0.2s ease;
+}
+
+a:hover {
+  color: var(--primary-hover);
+  text-decoration: underline;
+}
+
+#postPreview {
+  display: -webkit-box;
+  max-height: 120px;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 0.88rem;
+  line-height: 1.5;
+  opacity: 0.9;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+}
+
+/* ===== Loading ===== */
+.loading-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 2.5px solid rgba(129, 140, 248, 0.15);
+  border-top-color: var(--primary);
+  border-radius: 999px;
+  animation: spin 0.75s linear infinite;
+}
+
+/* ===== Results ===== */
+.results {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+/* Custom scrollbar for results */
+.results::-webkit-scrollbar {
+  width: 5px;
+}
+.results::-webkit-scrollbar-track {
+  background: transparent;
+}
+.results::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 10px;
+}
+
+/* ===== Claim cards ===== */
+.claim {
+  position: relative;
+  border-bottom: 1px solid var(--glass-border);
+  padding: 14px;
+  animation: claim-reveal 0.4s ease forwards;
+  animation-delay: calc(var(--i, 0) * 0.08s);
+  opacity: 0;
+}
+
+.claim:last-child {
+  border-bottom: 0;
+}
+
+@keyframes claim-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.claim-title {
+  margin-bottom: 10px;
+  font-family: "Outfit", sans-serif;
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--text-main);
+}
+
+/* Verdict pills — mirrors main app */
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.verdict.true {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--true);
+}
+
+.verdict.false {
+  background: rgba(248, 113, 113, 0.15);
+  color: var(--false);
+}
+
+.verdict.partial {
+  background: rgba(251, 191, 36, 0.15);
+  color: var(--partial);
+}
+
+/* Explanation & Sources */
+.explanation {
+  color: var(--text-main);
+  opacity: 0.85;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.sources {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.sources a {
+  display: inline-block;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--glass-border);
+  font-size: 0.78rem;
+  transition: all 0.2s ease;
+}
+
+.sources a:hover {
+  background: rgba(255, 255, 255, 0.08);
+  text-decoration: none;
+}
+
+/* ===== Empty / Error states ===== */
+.empty,
+.error {
+  padding: 16px;
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.empty {
+  color: var(--text-muted);
+}
+
+.error {
+  color: var(--false);
+  background: rgba(248, 113, 113, 0.06);
+  border-radius: var(--radius-sm);
+  margin: 4px;
+}
+
+/* ===== Footer Actions ===== */
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: auto;
+}
+
+.actions button {
+  flex: 1;
+  height: 40px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.88rem;
+  letter-spacing: 0.01em;
+  transition: all 0.25s ease;
+}
+
+/* Check Again — outlined glass style */
+.actions button:first-child {
+  color: var(--text-main);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.actions button:first-child:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+
+/* Open App — gradient primary */
+.actions button:last-child {
+  color: #fff;
+  background: linear-gradient(135deg, var(--primary), #a855f7);
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.25);
+}
+
+.actions button:last-child:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 28px rgba(99, 102, 241, 0.4);
+}
+
+/* ===== Utility ===== */
+.hidden {
+  display: none !important;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Subtle ambient glow ===== */
+body::before {
+  content: "";
+  position: fixed;
+  top: -30%;
+  left: -20%;
+  width: 140%;
+  height: 140%;
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(99, 102, 241, 0.06), transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.04), transparent 50%);
+  pointer-events: none;
+  z-index: -1;
+}

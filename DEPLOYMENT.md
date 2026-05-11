@@ -10,10 +10,12 @@
 1. Go to your Vercel dashboard
 2. Create a new project
 3. In the project settings, go to "Environment Variables"
-4. Add your `PERPLEXITY_API_KEY` variable with your actual Perplexity API key
+4. Add at least one AI provider key:
+   - `GROQ_API_KEY` for the primary text and vision provider
+   - `GEMINI_API_KEY` or `GOOGLE_API_KEY` for Gemini grounding/search fallback
 5. Make sure to set it for all environments (Production, Preview, Development)
 
-**If you don't set this environment variable, your deployment will fail with a 500 error!**
+**If you don't set at least one provider key, fact-checking endpoints will return a 500 error.**
 
 ## Deployment Steps
 
@@ -36,11 +38,12 @@
 ## Important Notes
 - Your Flask app will be available at the Vercel-provided URL
 - The API endpoints will be:
-  - `GET /` - Health check
+  - `GET /` - Web app
   - `GET /health` - Health check
   - `POST /fact-check` - Main fact-checking endpoint
   - `POST /fact-check-image` - Image fact-checking endpoint
-- Make sure to set your `PERPLEXITY_API_KEY` environment variable in Vercel dashboard
+  - `POST /api/extension/fact-check` - Chrome extension endpoint
+- Make sure to set `GROQ_API_KEY` and/or `GEMINI_API_KEY` in the Vercel dashboard
 
 ## Testing After Deployment
 Once deployed, test your API endpoints:
@@ -51,11 +54,11 @@ curl https://your-vercel-url.vercel.app/health
 ## Troubleshooting
 
 ### If you get a 500 error:
-1. **Check environment variables**: Make sure `PERPLEXITY_API_KEY` is set in Vercel dashboard
+1. **Check environment variables**: Make sure `GROQ_API_KEY` and/or `GEMINI_API_KEY` is set in Vercel dashboard
 2. **Check the health endpoint**: Visit `/health` to see if the API key is properly set
 3. **Check Vercel logs**: Go to your project dashboard → Functions → View Function Logs
 
 ### Common issues:
 - **Missing API key**: The most common cause of 500 errors
-- **Invalid API key**: Make sure your Perplexity API key is valid
+- **Invalid API key**: Make sure your Groq or Gemini key is valid
 - **Timeout issues**: The function timeout is set to 30 seconds in `vercel.json`

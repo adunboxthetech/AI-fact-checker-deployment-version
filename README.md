@@ -14,6 +14,7 @@ AI Fact Checker is a tool I built to verify online claims, articles, and images.
 ## Features
 
 - **Multi-modal Verification**: Fact-check raw text, drop in a web URL, or upload images directly to see what's real.
+- **Chrome Extension Frontend**: A separate Manifest V3 extension can fact-check the visible post while you browse social media.
 - **Web Extraction**: Built-in scrapers to pull clean content from:
   - **Social Media**: Custom adapters for social media sites like X/Twitter or reddit.
   - **Articles**: Reliable text extraction using `readability` and `BeautifulSoup`.
@@ -64,6 +65,21 @@ AI Fact Checker is a tool I built to verify online claims, articles, and images.
    ```
 2. **Access the interface**:
    The app serves `index.html` at `http://localhost:5000`. Just open this URL in your browser.
+
+## Chrome Extension
+
+The extension lives in `extension/` and uses the same Flask backend through `POST /api/extension/fact-check`.
+
+1. Start the backend:
+   ```bash
+   python app.py
+   ```
+2. Open `chrome://extensions`.
+3. Enable Developer mode.
+4. Click "Load unpacked" and select the `extension` folder.
+5. Browse a social feed and click the extension icon to check the visible post.
+
+The popup defaults to the production backend at `https://anindya-das-ai-fact-checker.vercel.app`, and you can change the backend URL from its settings button when developing locally.
 
 ## Deployment
 

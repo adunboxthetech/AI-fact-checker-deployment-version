@@ -20,11 +20,35 @@
     {
       "src": "assets/*",
       "use": "@vercel/static"
+    },
+    {
+      "src": "extension/*",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "extension/icons/*",
+      "use": "@vercel/static"
     }
   ],
   "routes": [
     {
       "src": "/api/(.*)",
+      "dest": "/app.py"
+    },
+    {
+      "src": "/health",
+      "dest": "/app.py"
+    },
+    {
+      "src": "/fact-check",
+      "dest": "/app.py"
+    },
+    {
+      "src": "/fact-check-image",
+      "dest": "/app.py"
+    },
+    {
+      "src": "/extension/fact-check",
       "dest": "/app.py"
     },
     {

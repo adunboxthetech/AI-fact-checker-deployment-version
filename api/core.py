@@ -89,6 +89,7 @@ BOILERPLATE_MARKERS = [
 ]
 
 MAX_TEXT_CHARS = 12000
+MAX_EXTENSION_TEXT_CHARS = 9000
 MAX_CLAIMS = 6
 MAX_IMAGE_CLAIMS = 4
 MAX_IMAGES_TO_ANALYZE = 2
@@ -2577,7 +2578,7 @@ def fact_check_image_input(
 ) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
+        return {"error": checker_error or "No AI provider API key configured"}, 500
 
     original_image = image_url or ("data_url" if image_data_url else None)
     if not image_data_url and image_url:
@@ -2666,7 +2667,7 @@ def _analyze_image_urls_with_queue(
 def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
     checker, checker_error = _get_checker()
     if checker is None:
-        return {"error": checker_error or "GEMINI_API_KEY not configured"}, 500
+        return {"error": checker_error or "No AI provider API key configured"}, 500
 
     url = normalize_url(url)
     if not is_valid_url(url):
@@ -2753,4 +2754,148 @@ def fact_check_url_input(url: str) -> Tuple[Dict[str, Any], int]:
         ):
             response["image_analysis_error"] = image_analysis_errors[0]
 
+    return response, 200
+
+
+def _clean_extension_image_urls(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    urls = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = _normalize_source_url(item)
+        if normalized:
+            urls.append(normalized)
+    return _dedupe_sources(urls, limit=5)
+
+
+def _extension_source_fallbacks(payload: Dict[str, Any]) -> List[str]:
+    urls = []
+    for key in ("post_url", "url", "page_url"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            urls.append(value)
+    return _dedupe_sources(urls, limit=3)
+
+
+def _build_extension_context(payload: Dict[str, Any], text: str) -> str:
+    context_parts = []
+    title = _clean_text(str(payload.get("title") or ""))
+    author = _clean_text(str(payload.get("author") or ""))
+    platform = _clean_text(str(payload.get("platform") or ""))
+    post_url = _normalize_source_url(str(payload.get("post_url") or ""))
+    page_url = _normalize_source_url(
+        str(payload.get("page_url") or payload.get("url") or "")
+    )
+
+    if title:
+        context_parts.append(f"Post title: {title}")
+    if author:
+        context_parts.append(f"Post author: {author}")
+    if platform:
+        context_parts.append(f"Platform: {platform}")
+    if post_url:
+        context_parts.append(f"Post URL: {post_url}")
+    elif page_url:
+        context_parts.append(f"Page URL: {page_url}")
+    context_parts.append(f"Visible post text: {text}")
+    return _truncate("\n".join(context_parts), MAX_EXTENSION_TEXT_CHARS)
+
+
+def fact_check_extension_post_input(
+    payload: Dict[str, Any]
+) -> Tuple[Dict[str, Any], int]:
+    text = _clean_text(str(payload.get("text") or ""))
+    image_urls = _clean_extension_image_urls(payload.get("image_urls"))
+    image_url = _normalize_source_url(str(payload.get("image_url") or ""))
+    if not image_url and image_urls:
+        image_url = image_urls[0]
+    screenshot_data_url = payload.get("screenshot_data_url")
+    if not isinstance(screenshot_data_url, str) or not screenshot_data_url.startswith(
+        "data:image/"
+    ):
+        screenshot_data_url = None
+
+    if screenshot_data_url and len(screenshot_data_url) > 10 * 1024 * 1024:
+        return {
+            "error": "Screenshot is too large. Try again with less page content visible."
+        }, 400
+
+    if not text and not image_url and not screenshot_data_url:
+        return {"error": "No visible post text or image content was provided."}, 400
+
+    checker, checker_error = _get_checker()
+    if checker is None:
+        return {
+            "error": checker_error
+            or "No AI provider API key configured. Set GROQ_API_KEY and/or GEMINI_API_KEY."
+        }, 500
+
+    source_fallback = _extension_source_fallbacks(payload)
+    results: List[Dict[str, Any]] = []
+    text_analysis_error = ""
+    image_analysis_error = ""
+
+    if text:
+        context = _build_extension_context(payload, text)
+        results.extend(checker.fact_check_text_claims(context))
+        text_analysis_error = checker.last_text_error
+        if results and (image_url or screenshot_data_url):
+            checker._rate_limit_pause()
+
+    should_analyze_image = bool(screenshot_data_url) and (
+        not results or not _has_claim_signal(text)
+    )
+    if should_analyze_image:
+        results.extend(
+            checker.fact_check_image_content(
+                image_url=None,
+                image_data_url=screenshot_data_url,
+                max_claims=min(3, MAX_IMAGE_CLAIMS),
+            )
+        )
+        image_analysis_error = checker.last_image_error
+    elif image_url and not results:
+        results.extend(
+            checker.fact_check_image_content(
+                image_url=image_url,
+                image_data_url=None,
+                max_claims=min(3, MAX_IMAGE_CLAIMS),
+            )
+        )
+        image_analysis_error = checker.last_image_error
+
+    if results and hasattr(checker, "refine_results_with_web_evidence"):
+        results = checker.refine_results_with_web_evidence(results)
+
+    for item in results:
+        result = item.get("result") if isinstance(item, dict) else None
+        if isinstance(result, dict):
+            result["sources"] = _dedupe_sources(
+                _clean_sources(result.get("sources", [])) + source_fallback,
+                MAX_WEB_EVIDENCE_SOURCES,
+            )
+
+    response = {
+        "original_text": text,
+        "claims_found": len(results),
+        "fact_check_results": results,
+        "timestamp": time.time(),
+        "source_url": source_fallback[0] if source_fallback else None,
+        "source_title": _clean_text(str(payload.get("title") or "")),
+        "platform": _clean_text(str(payload.get("platform") or "")) or "unknown",
+        "extraction": {
+            "method": _clean_text(str(payload.get("extraction_method") or "dom")),
+            "text_length": len(text),
+            "images_detected": len(image_urls)
+            + (1 if image_url and image_url not in image_urls else 0),
+            "screenshot_used": bool(should_analyze_image),
+        },
+        "debug_image_urls": image_urls,
+    }
+    if text_analysis_error and not results:
+        response["analysis_error"] = text_analysis_error
+    if image_analysis_error and not results:
+        response["image_analysis_error"] = image_analysis_error
     return response, 200

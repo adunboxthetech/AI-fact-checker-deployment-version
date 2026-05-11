@@ -35,6 +35,6 @@
 - Avoid committing local-only folders such as `.venv`, `__pycache__`, or deployment output.
 
 ## Notes For Future Agents
-- Assume the Perplexity API key is provided through `.env`.
+- Assume Groq and/or Gemini API keys are provided through `.env`.
 - Prefer small, readable Python changes and avoid introducing unnecessary abstractions.
 - When changing request or response formats, update both backend and frontend code paths together.

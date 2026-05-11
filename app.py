@@ -15,6 +15,7 @@ from api.core import (
     GEMINI_API_KEY,
     GROQ_API_KEY,
     _get_env_var_insensitive,
+    fact_check_extension_post_input,
     fact_check_image_input,
     fact_check_text_input,
     fact_check_url_input,
@@ -118,6 +119,14 @@ def fact_check_image():
         ), 400
 
     response_data, status_code = fact_check_image_input(image_data_url, image_url)
+    return jsonify(response_data), status_code
+
+
+@app.route("/extension/fact-check", methods=["POST"])
+@app.route("/api/extension/fact-check", methods=["POST"])
+def fact_check_extension_post():
+    data = request.get_json(silent=True) or {}
+    response_data, status_code = fact_check_extension_post_input(data)
     return jsonify(response_data), status_code
 
 
