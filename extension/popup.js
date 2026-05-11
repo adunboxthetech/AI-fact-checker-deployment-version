@@ -14,7 +14,10 @@ const elements = {
   loadingText: document.getElementById("loadingText"),
   resultCard: document.getElementById("resultCard"),
   retryBtn: document.getElementById("retryBtn"),
-  openAppBtn: document.getElementById("openAppBtn")
+  openAppBtn: document.getElementById("openAppBtn"),
+  themeToggle: document.getElementById("themeToggle"),
+  moonIcon: document.getElementById("moonIcon"),
+  sunIcon: document.getElementById("sunIcon")
 };
 
 let activeTab = null;
@@ -28,10 +31,14 @@ async function init() {
     return;
   }
 
-  const saved = await chrome.storage.sync.get({ apiBase: DEFAULT_API_BASE });
+  const saved = await chrome.storage.sync.get({ apiBase: DEFAULT_API_BASE, theme: "dark" });
   apiBase = saved.apiBase || DEFAULT_API_BASE;
   elements.apiBase.value = apiBase;
 
+  // Initialize theme
+  applyTheme(saved.theme || "dark");
+
+  elements.themeToggle.addEventListener("click", toggleTheme);
   elements.settingsToggle.addEventListener("click", () => {
     elements.settingsPanel.classList.toggle("hidden");
   });
@@ -71,6 +78,48 @@ function renderHostedFallback() {
   elements.settingsToggle.addEventListener("click", () => {
     elements.settingsPanel.classList.toggle("hidden");
   });
+
+  // Theme toggle works even in fallback mode
+  const fallbackTheme = localStorage.getItem("ai-fc-ext-theme") || "dark";
+  applyTheme(fallbackTheme);
+  elements.themeToggle.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme") || "dark";
+    const next = current === "dark" ? "light" : "dark";
+    applyTheme(next);
+    try { localStorage.setItem("ai-fc-ext-theme", next); } catch (_) {}
+  });
+}
+
+// ===== Theme management =====
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  updateThemeIcon(theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "dark";
+  const next = current === "dark" ? "light" : "dark";
+  applyTheme(next);
+  if (hasExtensionApis()) {
+    chrome.storage.sync.set({ theme: next });
+  }
+  try { localStorage.setItem("ai-fc-ext-theme", next); } catch (_) {}
+}
+
+function updateThemeIcon(theme) {
+  if (!elements.moonIcon || !elements.sunIcon) return;
+  if (theme === "dark") {
+    elements.moonIcon.style.display = "";
+    elements.sunIcon.style.display = "none";
+  } else {
+    elements.moonIcon.style.display = "none";
+    elements.sunIcon.style.display = "";
+  }
+  if (elements.themeToggle) {
+    elements.themeToggle.setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} mode`);
+    elements.themeToggle.title = `Switch to ${theme === "dark" ? "light" : "dark"} mode`;
+  }
 }
 
 async function saveSettings() {

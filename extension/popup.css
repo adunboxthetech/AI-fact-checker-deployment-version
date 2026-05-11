@@ -35,6 +35,28 @@
   --radius-sm: 8px;
 }
 
+/* Light theme — mirrors main app */
+:root[data-theme="light"] {
+  --bg: #fafafa;
+  --bg-secondary: #f4f4f5;
+  --text-main: #09090b;
+  --text-muted: #71717a;
+
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --grad-1: rgba(99, 102, 241, 0.15);
+  --grad-2: rgba(168, 85, 247, 0.1);
+  --grad-3: rgba(59, 130, 246, 0.08);
+
+  --true: #10b981;
+  --false: #ef4444;
+  --partial: #f59e0b;
+}
+
 body {
   width: 400px;
   min-height: 520px;
@@ -46,6 +68,7 @@ body {
     var(--bg);
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 h1, h2, h3 {
@@ -484,4 +507,43 @@ body::before {
     radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.04), transparent 50%);
   pointer-events: none;
   z-index: -1;
+  transition: background 0.3s ease;
 }
+
+/* ===== Light theme overrides ===== */
+:root[data-theme="light"] .icon-button:hover {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+:root[data-theme="light"] .actions button:first-child:hover {
+  border-color: rgba(0, 0, 0, 0.15);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+:root[data-theme="light"] .setting-row input {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+:root[data-theme="light"] .sources a {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .sources a:hover {
+  background: rgba(0, 0, 0, 0.07);
+}
+
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(99, 102, 241, 0.08), transparent 50%),
+    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.06), transparent 50%);
+}
+
+/* Theme toggle button */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
