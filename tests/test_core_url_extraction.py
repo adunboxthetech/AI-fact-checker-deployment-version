@@ -113,6 +113,12 @@ class UrlExtractionTests(unittest.TestCase):
     def test_private_url_is_rejected(self):
         self.assertFalse(core.is_valid_url("http://127.0.0.1:5000/health"))
 
+    def test_styled_unicode_headline_is_normalized_as_claim_signal(self):
+        text = "🚨 𝗧𝗶𝘁𝗮𝗴𝗮𝗿𝗵 𝘁𝗼 𝗺𝗮𝗻𝘂𝗳𝗮𝗰𝘁𝘂𝗿𝗲 𝗯𝘂𝗹𝗹𝗲𝘁 𝘁𝗿𝗮𝗶𝗻𝘀 𝗶𝗻 𝗕𝗲𝗻𝗴𝗮𝗹."
+
+        self.assertIn("Titagarh to manufacture", core._clean_text(text))
+        self.assertTrue(core._has_claim_signal(text))
+
     def test_filter_image_urls_dedupes_preview_variants(self):
         images = core._filter_image_urls([
             "https://i.redd.it/example.jpeg",

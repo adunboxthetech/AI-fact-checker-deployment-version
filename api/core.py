@@ -5,6 +5,7 @@ import json
 import os
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -392,7 +393,7 @@ def is_valid_url(url: str) -> bool:
 
 
 def _clean_text(text: str) -> str:
-    return " ".join((text or "").split())
+    return " ".join(unicodedata.normalize("NFKC", text or "").split())
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -996,7 +997,14 @@ def _has_claim_signal(text: str) -> bool:
     if re.search(
         r"\b(is|are|was|were|has|have|had|will|won|lost|died|born|founded|"
         r"announced|said|says|claims|reports|files|accused|convicted|acquitted|"
-        r"killed|arrested|sentenced|caused|proved|debunked)\b",
+        r"killed|arrested|sentenced|caused|proved|debunked|manufacture|manufactures|"
+        r"manufactured|build|builds|built|produce|produces|produced|launch|launches|"
+        r"launched|open|opens|opened|invest|invests|invested|export|exports|import|imports)\b",
+        t,
+    ):
+        return True
+    if re.search(
+        r"\bto\s+(manufacture|build|produce|launch|open|invest|export|import|make|set up|establish)\b",
         t,
     ):
         return True
