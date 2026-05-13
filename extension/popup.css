@@ -49,7 +49,7 @@
   --partial: #f59e0b;
 }
 
-/* ===== Body ===== */
+/* ===== Body — clip-path trick hides sharp corners ===== */
 body {
   width: 400px;
   min-height: 520px;
@@ -61,6 +61,9 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
   overflow: hidden;
   position: relative;
+  /* THE TRICK: clip the entire body to a rounded rectangle.
+     The sharp window corners become transparent, revealing the page behind. */
+  clip-path: inset(0 round 12px);
 }
 
 h1, h2, h3 {
@@ -71,7 +74,7 @@ button, input {
   font: inherit;
 }
 
-/* ===== Mystical Cloud Canvas — same as main app ===== */
+/* ===== Mystical Cloud Canvas — exact same as main app ===== */
 .cloud-canvas {
   position: absolute;
   bottom: 0;
@@ -81,14 +84,74 @@ button, input {
   pointer-events: none;
   z-index: 0;
   opacity: 0.6;
+  transition: opacity 2s ease;
   mix-blend-mode: screen;
-  /* Low-res canvas scaled up gives a natural blur / cloud look */
   image-rendering: auto;
 }
 
 :root[data-theme="light"] .cloud-canvas {
   mix-blend-mode: multiply;
   opacity: 0.55;
+}
+
+/* ===== Thought Bubbles — ported from main app ===== */
+.thought-bubbles-container {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.thought-bubble {
+  position: absolute;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 8px 14px;
+  font-family: "Outfit", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-main);
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.12);
+  opacity: 0;
+  transform: scale(0.5) translateY(10px);
+  animation: bubble-pop-in 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.thought-bubble::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+}
+
+/* Tail positions */
+.thought-bubble.pos-top-left::after   { bottom: -6px; left: 16px; }
+.thought-bubble.pos-top-right::after  { bottom: -6px; right: 16px; }
+.thought-bubble.pos-bottom-left::after  { top: -6px; left: 16px; }
+.thought-bubble.pos-bottom-right::after { top: -6px; right: 16px; }
+.thought-bubble.pos-left::after  { right: -6px; top: 50%; transform: translateY(-50%); }
+.thought-bubble.pos-right::after { left: -6px; top: 50%; transform: translateY(-50%); }
+
+.thought-bubble.fading {
+  animation: bubble-fade-out 0.4s ease forwards;
+}
+
+@keyframes bubble-pop-in {
+  0%   { opacity: 0; transform: scale(0.5) translateY(10px); }
+  60%  { opacity: 1; transform: scale(1.08) translateY(-2px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes bubble-fade-out {
+  0%   { opacity: 1; transform: scale(1) translateY(0); }
+  100% { opacity: 0; transform: scale(0.7) translateY(-10px); }
 }
 
 /* ===== Shell ===== */

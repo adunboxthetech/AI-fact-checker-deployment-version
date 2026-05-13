@@ -181,12 +181,7 @@ async function runCheck() {
     showError(error.message || "Could not complete the check.");
   } finally {
     elements.loadingCard.classList.add("hidden");
-
-    // Disperse the cloud back to ambient
-    if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
-      mysticalCloud.setIntensity(false);
-      mysticalCloud.setLoadingState(false);
-    }
+    disperseThoughtBubbles();
   }
 }
 
@@ -341,15 +336,107 @@ function humanizeUrl(url, index) {
   }
 }
 
+// ===== Thought Bubble System — ported from main app =====
+
+const bubbleMessages = [
+  "Analyzing claims...",
+  "Cross-referencing sources...",
+  "Evaluating evidence...",
+  "Verifying credibility...",
+  "Checking global databases...",
+  "Comparing perspectives..."
+];
+
+// Positions adapted for the 400×520 popup size
+const bubblePositions = [
+  { top: "28%", left: "50%", cls: "pos-top-right" },
+  { top: "42%", right: "5%", cls: "pos-right" },
+  { bottom: "30%", right: "8%", cls: "pos-bottom-right" },
+  { bottom: "18%", left: "8%", cls: "pos-bottom-left" },
+  { top: "50%", left: "5%", cls: "pos-left" },
+  { top: "22%", left: "8%", cls: "pos-top-left" }
+];
+
+let bubbleIndex = 0;
+let bubbleInterval = null;
+let cloudRunning = false;
+const thoughtContainer = document.getElementById("thoughtBubbles");
+
+function startThoughtBubbles() {
+  if (!thoughtContainer) return;
+  cloudRunning = true;
+  bubbleIndex = 0;
+  thoughtContainer.innerHTML = "";
+
+  // Start cloud loading vortex
+  if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
+    mysticalCloud.setIntensity(true);
+    mysticalCloud.setLoadingState(true);
+  }
+
+  _spawnBubble();
+  bubbleInterval = setInterval(() => {
+    if (!cloudRunning) return;
+    _spawnBubble();
+  }, 2200);
+}
+
+function _spawnBubble() {
+  if (!thoughtContainer) return;
+
+  // Fade previous bubbles
+  const old = thoughtContainer.querySelectorAll(".thought-bubble:not(.fading)");
+  old.forEach(b => {
+    b.classList.add("fading");
+    setTimeout(() => b.remove(), 400);
+  });
+
+  const msg = bubbleMessages[bubbleIndex % bubbleMessages.length];
+  const pos = bubblePositions[bubbleIndex % bubblePositions.length];
+  bubbleIndex++;
+
+  const bubble = document.createElement("div");
+  bubble.className = `thought-bubble ${pos.cls}`;
+  bubble.textContent = msg;
+  if (pos.top) bubble.style.top = pos.top;
+  if (pos.bottom) bubble.style.bottom = pos.bottom;
+  if (pos.left) bubble.style.left = pos.left;
+  if (pos.right) bubble.style.right = pos.right;
+  thoughtContainer.appendChild(bubble);
+}
+
+function disperseThoughtBubbles() {
+  cloudRunning = false;
+  if (bubbleInterval) {
+    clearInterval(bubbleInterval);
+    bubbleInterval = null;
+  }
+
+  // Fade out all bubbles
+  if (thoughtContainer) {
+    thoughtContainer.querySelectorAll(".thought-bubble").forEach(b => {
+      b.classList.add("fading");
+      setTimeout(() => b.remove(), 400);
+    });
+  }
+
+  // Return cloud to ambient
+  if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
+    mysticalCloud.setIntensity(false);
+    mysticalCloud.setLoadingState(false);
+  }
+}
+
+// ===== Loading / Error helpers =====
+
 function setLoading(text) {
   elements.loadingText.textContent = text;
   elements.loadingCard.classList.remove("hidden");
   elements.statusText.textContent = text;
 
-  // Intensify the mystical cloud during loading
-  if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
-    mysticalCloud.setIntensity(true);
-    mysticalCloud.setLoadingState(true);
+  // Start thought bubbles on first loading call
+  if (!cloudRunning) {
+    startThoughtBubbles();
   }
 }
 
@@ -361,6 +448,7 @@ function clearResults() {
 function showError(message) {
   elements.statusText.textContent = "Check failed";
   elements.loadingCard.classList.add("hidden");
+  disperseThoughtBubbles();
   elements.resultCard.innerHTML = "";
   elements.resultCard.classList.remove("hidden");
   const error = document.createElement("div");
