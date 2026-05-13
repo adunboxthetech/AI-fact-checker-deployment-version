@@ -46,10 +46,11 @@ html {
 }
 
 body {
-  width: 408px;
+  width: 400px;
+  height: 580px;
   margin: 0;
-  padding: 4px;
-  background: transparent !important;
+  padding: 0;
+  background: var(--bg);
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -58,15 +59,14 @@ h1, h2, h3 { font-family: "Outfit", system-ui, sans-serif; }
 button, input { font: inherit; }
 
 .popup-wrapper {
-  width: 400px;
-  min-height: 520px;
-  border-radius: 16px;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
   overflow: hidden;
   background: var(--bg);
   color: var(--text-main);
   position: relative;
   transition: background-color 0.3s ease, color 0.3s ease;
-  box-shadow: 0 0 0 1px var(--glass-border), 0 8px 40px rgba(0,0,0,0.5);
 }
 
 /* ===== Cloud Canvas ===== */
@@ -151,7 +151,7 @@ button, input { font: inherit; }
 /* ===== Shell ===== */
 .shell {
   display: flex;
-  min-height: 520px;
+  height: 100%;
   flex-direction: column;
   gap: 14px;
   padding: 20px;
@@ -356,7 +356,8 @@ a:hover {
 
 /* ===== Results ===== */
 .results {
-  max-height: 320px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 4px;
 }
@@ -527,7 +528,7 @@ a:hover {
   background: rgba(0, 0, 0, 0.07);
 }
 :root[data-theme="light"] .popup-wrapper {
-  box-shadow: 0 0 0 1px var(--glass-border), 0 8px 40px rgba(0,0,0,0.15);
+  box-shadow: none;
 }
 
 .topbar-actions {
