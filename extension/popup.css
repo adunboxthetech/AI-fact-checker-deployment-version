@@ -1,80 +1,76 @@
 /* ===== AI Fact Checker Extension — Mystical Cloud UI ===== */
 
-/* Reset */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-/* Theme tokens — mirrors main app */
+/* Theme tokens */
 :root {
   --bg: #050505;
   --bg-secondary: #0f0f11;
   --text-main: #f4f4f5;
   --text-muted: #a1a1aa;
-
   --glass-bg: rgba(20, 20, 25, 0.6);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-
   --primary: #818cf8;
   --primary-hover: #a5b4fc;
-
   --true: #34d399;
   --false: #f87171;
   --partial: #fbbf24;
-
   --radius-lg: 20px;
   --radius-md: 14px;
   --radius-sm: 10px;
 }
 
-/* Light theme */
 :root[data-theme="light"] {
   --bg: #fafafa;
   --bg-secondary: #f4f4f5;
   --text-main: #09090b;
   --text-muted: #71717a;
-
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-border: rgba(0, 0, 0, 0.08);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
-
   --primary: #6366f1;
   --primary-hover: #4f46e5;
-
   --true: #10b981;
   --false: #ef4444;
   --partial: #f59e0b;
 }
 
-/* ===== Body — clip-path trick hides sharp corners ===== */
+/* ===== ROUNDED CORNERS TRICK =====
+   html + body are transparent. A .popup-wrapper div inside has
+   border-radius + overflow:hidden, creating visible rounded corners.
+   Chrome renders the popup window behind it — on dark pages this blends. */
+
+html {
+  background: transparent !important;
+}
+
 body {
-  width: 400px;
-  min-height: 520px;
+  width: 408px;
   margin: 0;
-  color: var(--text-main);
-  background: var(--bg);
+  padding: 4px;
+  background: transparent !important;
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+h1, h2, h3 { font-family: "Outfit", system-ui, sans-serif; }
+button, input { font: inherit; }
+
+.popup-wrapper {
+  width: 400px;
+  min-height: 520px;
+  border-radius: 16px;
   overflow: hidden;
+  background: var(--bg);
+  color: var(--text-main);
   position: relative;
-  /* THE TRICK: clip the entire body to a rounded rectangle.
-     The sharp window corners become transparent, revealing the page behind. */
-  clip-path: inset(0 round 12px);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  /* Subtle outer glow for polish */
+  box-shadow: 0 0 0 1px var(--glass-border), 0 8px 40px rgba(0,0,0,0.5);
 }
 
-h1, h2, h3 {
-  font-family: "Outfit", system-ui, sans-serif;
-}
-
-button, input {
-  font: inherit;
-}
-
-/* ===== Mystical Cloud Canvas — exact same as main app ===== */
+/* ===== Cloud Canvas ===== */
 .cloud-canvas {
   position: absolute;
   bottom: 0;
@@ -94,7 +90,7 @@ button, input {
   opacity: 0.55;
 }
 
-/* ===== Thought Bubbles — ported from main app ===== */
+/* ===== Thought Bubbles ===== */
 .thought-bubbles-container {
   position: absolute;
   inset: 0;
@@ -131,7 +127,6 @@ button, input {
   border-radius: 50%;
 }
 
-/* Tail positions */
 .thought-bubble.pos-top-left::after   { bottom: -6px; left: 16px; }
 .thought-bubble.pos-top-right::after  { bottom: -6px; right: 16px; }
 .thought-bubble.pos-bottom-left::after  { top: -6px; left: 16px; }
@@ -191,7 +186,6 @@ p { margin: 0; }
   font-weight: 400;
 }
 
-/* Icon buttons (settings, theme toggle) */
 .icon-button {
   width: 36px;
   height: 36px;
@@ -232,20 +226,12 @@ p { margin: 0; }
 }
 
 @keyframes card-enter {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* ===== Settings Panel ===== */
-.settings {
-  padding: 14px;
-}
+/* ===== Settings ===== */
+.settings { padding: 14px; }
 
 .settings label {
   display: block;
@@ -264,9 +250,7 @@ p { margin: 0; }
 }
 
 .setting-row input {
-  min-width: 0;
-  flex: 1;
-  height: 36px;
+  min-width: 0; flex: 1; height: 36px;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   padding: 0 12px;
@@ -283,15 +267,13 @@ p { margin: 0; }
 }
 
 .setting-row button {
-  height: 36px;
-  border: 0;
+  height: 36px; border: 0;
   border-radius: var(--radius-sm);
   padding: 0 16px;
   color: #fff;
   background: var(--text-main);
   cursor: pointer;
-  font-weight: 500;
-  font-size: 0.85rem;
+  font-weight: 500; font-size: 0.85rem;
   transition: all 0.25s ease;
 }
 
@@ -302,9 +284,7 @@ p { margin: 0; }
 }
 
 /* ===== Post Card ===== */
-.post-card {
-  padding: 14px;
-}
+.post-card { padding: 14px; }
 
 .meta-row {
   display: flex;
@@ -316,16 +296,14 @@ p { margin: 0; }
 
 #platformBadge {
   display: inline-flex;
-  min-width: 0;
-  max-width: 230px;
+  min-width: 0; max-width: 230px;
   align-items: center;
   border: 1px solid rgba(129, 140, 248, 0.2);
   border-radius: 999px;
   padding: 4px 12px;
   color: var(--primary);
   background: rgba(129, 140, 248, 0.08);
-  font-size: 0.75rem;
-  font-weight: 600;
+  font-size: 0.75rem; font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   overflow: hidden;
@@ -369,8 +347,7 @@ a:hover {
 }
 
 .spinner {
-  width: 22px;
-  height: 22px;
+  width: 22px; height: 22px;
   flex: 0 0 auto;
   border: 2.5px solid rgba(129, 140, 248, 0.15);
   border-top-color: var(--primary);
@@ -385,19 +362,11 @@ a:hover {
   padding: 4px;
 }
 
-/* Custom scrollbar */
-.results::-webkit-scrollbar {
-  width: 5px;
-}
-.results::-webkit-scrollbar-track {
-  background: transparent;
-}
-.results::-webkit-scrollbar-thumb {
-  background: var(--glass-border);
-  border-radius: 10px;
-}
+.results::-webkit-scrollbar { width: 5px; }
+.results::-webkit-scrollbar-track { background: transparent; }
+.results::-webkit-scrollbar-thumb { background: var(--glass-border); border-radius: 10px; }
 
-/* ===== Claim cards ===== */
+/* ===== Claims ===== */
 .claim {
   position: relative;
   border-bottom: 1px solid var(--glass-border);
@@ -407,59 +376,36 @@ a:hover {
   opacity: 0;
 }
 
-.claim:last-child {
-  border-bottom: 0;
-}
+.claim:last-child { border-bottom: 0; }
 
 @keyframes claim-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .claim-title {
   margin-bottom: 10px;
   font-family: "Outfit", sans-serif;
-  font-size: 0.88rem;
-  font-weight: 600;
+  font-size: 0.88rem; font-weight: 600;
   line-height: 1.4;
   color: var(--text-main);
 }
 
-/* Verdict pills */
 .verdict {
   display: inline-flex;
   align-items: center;
   margin-bottom: 10px;
   border-radius: 999px;
   padding: 4px 12px;
-  font-size: 0.72rem;
-  font-weight: 700;
+  font-size: 0.72rem; font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.verdict.true {
-  background: rgba(52, 211, 153, 0.15);
-  color: var(--true);
-}
+.verdict.true   { background: rgba(52, 211, 153, 0.15); color: var(--true); }
+.verdict.false  { background: rgba(248, 113, 113, 0.15); color: var(--false); }
+.verdict.partial { background: rgba(251, 191, 36, 0.15); color: var(--partial); }
 
-.verdict.false {
-  background: rgba(248, 113, 113, 0.15);
-  color: var(--false);
-}
-
-.verdict.partial {
-  background: rgba(251, 191, 36, 0.15);
-  color: var(--partial);
-}
-
-/* Explanation & Sources */
 .explanation {
   color: var(--text-main);
   opacity: 0.85;
@@ -468,8 +414,7 @@ a:hover {
 }
 
 .sources {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 10px; padding-top: 10px;
   border-top: 1px solid var(--glass-border);
   color: var(--text-muted);
   font-size: 0.78rem;
@@ -491,31 +436,14 @@ a:hover {
   transition: all 0.2s ease;
 }
 
-.sources a:hover {
-  background: rgba(255, 255, 255, 0.08);
-  text-decoration: none;
-}
+.sources a:hover { background: rgba(255, 255, 255, 0.08); text-decoration: none; }
 
-/* ===== Empty / Error states ===== */
-.empty,
-.error {
-  padding: 16px;
-  font-size: 0.88rem;
-  line-height: 1.5;
-}
+/* ===== Empty / Error ===== */
+.empty, .error { padding: 16px; font-size: 0.88rem; line-height: 1.5; }
+.empty { color: var(--text-muted); }
+.error { color: var(--false); background: rgba(248, 113, 113, 0.06); border-radius: var(--radius-sm); margin: 4px; }
 
-.empty {
-  color: var(--text-muted);
-}
-
-.error {
-  color: var(--false);
-  background: rgba(248, 113, 113, 0.06);
-  border-radius: var(--radius-sm);
-  margin: 4px;
-}
-
-/* ===== Footer Actions ===== */
+/* ===== Footer ===== */
 .actions {
   display: flex;
   align-items: center;
@@ -525,18 +453,15 @@ a:hover {
 }
 
 .actions button {
-  flex: 1;
-  height: 40px;
+  flex: 1; height: 40px;
   border: 0;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-weight: 600;
-  font-size: 0.88rem;
+  font-weight: 600; font-size: 0.88rem;
   letter-spacing: 0.01em;
   transition: all 0.25s ease;
 }
 
-/* Check Again — outlined glass style */
 .actions button:first-child {
   color: var(--text-main);
   border: 1px solid var(--glass-border);
@@ -551,7 +476,6 @@ a:hover {
   transform: translateY(-1px);
 }
 
-/* Open App — solid primary */
 .actions button:last-child {
   color: var(--bg);
   background: var(--text-main);
@@ -566,58 +490,47 @@ a:hover {
 }
 
 /* ===== Utility ===== */
-.hidden {
-  display: none !important;
-}
+.hidden { display: none !important; }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* ===== Light theme overrides ===== */
 :root[data-theme="light"] .icon-button:hover {
   background: rgba(0, 0, 0, 0.05);
   border-color: rgba(0, 0, 0, 0.12);
 }
-
 :root[data-theme="light"] .actions button:first-child:hover {
   border-color: rgba(0, 0, 0, 0.15);
   background: rgba(0, 0, 0, 0.03);
 }
-
 :root[data-theme="light"] .actions button:last-child {
   color: #fff;
   background: var(--text-main);
 }
-
 :root[data-theme="light"] .actions button:last-child:hover {
   background: var(--primary);
   color: #fff;
 }
-
 :root[data-theme="light"] .setting-row input {
   background: rgba(0, 0, 0, 0.03);
 }
-
 :root[data-theme="light"] .setting-row button {
-  background: var(--text-main);
-  color: #fff;
+  background: var(--text-main); color: #fff;
 }
-
 :root[data-theme="light"] .setting-row button:hover {
   background: var(--primary);
 }
-
 :root[data-theme="light"] .sources a {
   background: rgba(0, 0, 0, 0.04);
   border-color: rgba(0, 0, 0, 0.08);
 }
-
 :root[data-theme="light"] .sources a:hover {
   background: rgba(0, 0, 0, 0.07);
 }
+:root[data-theme="light"] .popup-wrapper {
+  box-shadow: 0 0 0 1px var(--glass-border), 0 8px 40px rgba(0,0,0,0.15);
+}
 
-/* Theme toggle button */
 .topbar-actions {
   display: flex;
   align-items: center;

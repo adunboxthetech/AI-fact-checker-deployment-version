@@ -347,14 +347,15 @@ const bubbleMessages = [
   "Comparing perspectives..."
 ];
 
-// Positions adapted for the 400×520 popup size
+// Positions in the LOWER half of the popup (55-75% height range)
+// so they never overlap the post card at the top.
 const bubblePositions = [
-  { top: "28%", left: "50%", cls: "pos-top-right" },
-  { top: "42%", right: "5%", cls: "pos-right" },
-  { bottom: "30%", right: "8%", cls: "pos-bottom-right" },
-  { bottom: "18%", left: "8%", cls: "pos-bottom-left" },
-  { top: "50%", left: "5%", cls: "pos-left" },
-  { top: "22%", left: "8%", cls: "pos-top-left" }
+  { top: "56%", right: "12%", cls: "pos-top-right" },
+  { top: "62%", left: "8%",  cls: "pos-left" },
+  { top: "58%", left: "30%", cls: "pos-top-left" },
+  { top: "68%", right: "8%", cls: "pos-right" },
+  { top: "64%", left: "15%", cls: "pos-bottom-left" },
+  { top: "60%", right: "20%", cls: "pos-bottom-right" }
 ];
 
 let bubbleIndex = 0;
@@ -367,6 +368,9 @@ function startThoughtBubbles() {
   cloudRunning = true;
   bubbleIndex = 0;
   thoughtContainer.innerHTML = "";
+
+  // HIDE the loading card (spinner) — bubbles replace it
+  elements.loadingCard.classList.add("hidden");
 
   // Start cloud loading vortex
   if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
@@ -430,13 +434,18 @@ function disperseThoughtBubbles() {
 // ===== Loading / Error helpers =====
 
 function setLoading(text) {
-  elements.loadingText.textContent = text;
-  elements.loadingCard.classList.remove("hidden");
   elements.statusText.textContent = text;
 
-  // Start thought bubbles on first loading call
-  if (!cloudRunning) {
-    startThoughtBubbles();
+  // "Fact-checking..." phase → hide spinner, show cloud + thought bubbles
+  if (text.toLowerCase().includes("fact-check")) {
+    elements.loadingCard.classList.add("hidden");
+    if (!cloudRunning) {
+      startThoughtBubbles();
+    }
+  } else {
+    // Initial extraction phases → show spinner normally
+    elements.loadingText.textContent = text;
+    elements.loadingCard.classList.remove("hidden");
   }
 }
 
