@@ -1,6 +1,4 @@
-/* ===== AI Fact Checker Extension — Aligned with main-app mystical UI ===== */
-
-/* Fonts (loaded from Google in popup.html) */
+/* ===== AI Fact Checker Extension — Mystical Cloud UI ===== */
 
 /* Reset */
 * {
@@ -9,7 +7,7 @@
   box-sizing: border-box;
 }
 
-/* Theme tokens — mirrors main app dark theme */
+/* Theme tokens — mirrors main app */
 :root {
   --bg: #050505;
   --bg-secondary: #0f0f11;
@@ -22,20 +20,17 @@
 
   --primary: #818cf8;
   --primary-hover: #a5b4fc;
-  --grad-1: rgba(99, 102, 241, 0.35);
-  --grad-2: rgba(139, 92, 246, 0.25);
-  --grad-3: rgba(59, 130, 246, 0.15);
 
   --true: #34d399;
   --false: #f87171;
   --partial: #fbbf24;
 
-  --radius-lg: 16px;
-  --radius-md: 12px;
-  --radius-sm: 8px;
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 10px;
 }
 
-/* Light theme — mirrors main app */
+/* Light theme */
 :root[data-theme="light"] {
   --bg: #fafafa;
   --bg-secondary: #f4f4f5;
@@ -48,13 +43,15 @@
 
   --primary: #6366f1;
   --primary-hover: #4f46e5;
-  --grad-1: rgba(99, 102, 241, 0.15);
-  --grad-2: rgba(168, 85, 247, 0.1);
-  --grad-3: rgba(59, 130, 246, 0.08);
 
   --true: #10b981;
   --false: #ef4444;
   --partial: #f59e0b;
+}
+
+/* ===== Body — Rounded corners + Cloud background ===== */
+html {
+  background: transparent;
 }
 
 body {
@@ -62,13 +59,13 @@ body {
   min-height: 520px;
   margin: 0;
   color: var(--text-main);
-  background:
-    radial-gradient(ellipse at 20% 0%, var(--grad-1), transparent 55%),
-    radial-gradient(ellipse at 80% 100%, var(--grad-2), transparent 50%),
-    var(--bg);
+  background: var(--bg);
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   transition: background-color 0.3s ease, color 0.3s ease;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  position: relative;
 }
 
 h1, h2, h3 {
@@ -79,6 +76,119 @@ button, input {
   font: inherit;
 }
 
+/* ===== Animated Cloud Background ===== */
+/* Layered CSS clouds that drift and morph — mimics the main app's WebGL cloud */
+.cloud-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: var(--radius-lg);
+}
+
+.cloud-bg::before,
+.cloud-bg::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.45;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+/* Primary cloud — deep indigo, bottom-left origin */
+.cloud-bg::before {
+  width: 320px;
+  height: 320px;
+  bottom: -100px;
+  left: -60px;
+  background: radial-gradient(circle, rgba(40, 48, 135, 0.7) 0%, rgba(40, 48, 135, 0) 70%);
+  animation-name: cloud-drift-1;
+  animation-duration: 12s;
+}
+
+/* Secondary cloud — muted purple-slate, top-right origin */
+.cloud-bg::after {
+  width: 280px;
+  height: 280px;
+  top: -80px;
+  right: -60px;
+  background: radial-gradient(circle, rgba(70, 55, 120, 0.5) 0%, rgba(70, 55, 120, 0) 70%);
+  animation-name: cloud-drift-2;
+  animation-duration: 15s;
+}
+
+/* Extra cloud layers via child spans */
+.cloud-bg .cloud-layer-1 {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  top: 30%;
+  left: 50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(130, 140, 220, 0.25) 0%, transparent 70%);
+  filter: blur(50px);
+  animation: cloud-drift-3 18s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.cloud-bg .cloud-layer-2 {
+  position: absolute;
+  width: 160px;
+  height: 160px;
+  bottom: 15%;
+  right: 20%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(100, 120, 180, 0.2) 0%, transparent 70%);
+  filter: blur(45px);
+  animation: cloud-drift-4 20s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes cloud-drift-1 {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.4; }
+  50%  { transform: translate(40px, -30px) scale(1.15); opacity: 0.55; }
+  100% { transform: translate(20px, -60px) scale(1.05); opacity: 0.35; }
+}
+
+@keyframes cloud-drift-2 {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.35; }
+  50%  { transform: translate(-30px, 40px) scale(1.1); opacity: 0.5; }
+  100% { transform: translate(-50px, 20px) scale(0.95); opacity: 0.3; }
+}
+
+@keyframes cloud-drift-3 {
+  0%   { transform: translate(-50%, 0) scale(1); opacity: 0.2; }
+  100% { transform: translate(-50%, 30px) scale(1.2); opacity: 0.35; }
+}
+
+@keyframes cloud-drift-4 {
+  0%   { transform: translate(0, 0) scale(1); opacity: 0.15; }
+  100% { transform: translate(-20px, -20px) scale(1.15); opacity: 0.3; }
+}
+
+/* Light theme — softer, less saturated clouds */
+:root[data-theme="light"] .cloud-bg::before {
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+  opacity: 0.5;
+}
+
+:root[data-theme="light"] .cloud-bg::after {
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.12) 0%, transparent 70%);
+  opacity: 0.4;
+}
+
+:root[data-theme="light"] .cloud-bg .cloud-layer-1 {
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.1) 0%, transparent 70%);
+}
+
+:root[data-theme="light"] .cloud-bg .cloud-layer-2 {
+  background: radial-gradient(circle, rgba(130, 140, 220, 0.08) 0%, transparent 70%);
+}
+
 /* ===== Shell ===== */
 .shell {
   display: flex;
@@ -86,6 +196,8 @@ button, input {
   flex-direction: column;
   gap: 14px;
   padding: 20px;
+  position: relative;
+  z-index: 1;
 }
 
 /* ===== Top Bar ===== */
@@ -114,7 +226,7 @@ p { margin: 0; }
   font-weight: 400;
 }
 
-/* Settings gear button */
+/* Icon buttons (settings, theme toggle) */
 .icon-button {
   width: 36px;
   height: 36px;
@@ -211,7 +323,7 @@ p { margin: 0; }
   border-radius: var(--radius-sm);
   padding: 0 16px;
   color: #fff;
-  background: linear-gradient(135deg, var(--primary), #a855f7);
+  background: var(--text-main);
   cursor: pointer;
   font-weight: 500;
   font-size: 0.85rem;
@@ -220,7 +332,8 @@ p { margin: 0; }
 
 .setting-row button:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+  background: var(--primary);
+  box-shadow: 0 4px 16px rgba(129, 140, 248, 0.25);
 }
 
 /* ===== Post Card ===== */
@@ -307,7 +420,7 @@ a:hover {
   padding: 4px;
 }
 
-/* Custom scrollbar for results */
+/* Custom scrollbar */
 .results::-webkit-scrollbar {
   width: 5px;
 }
@@ -353,7 +466,7 @@ a:hover {
   color: var(--text-main);
 }
 
-/* Verdict pills — mirrors main app */
+/* Verdict pills */
 .verdict {
   display: inline-flex;
   align-items: center;
@@ -406,7 +519,7 @@ a:hover {
   vertical-align: bottom;
   white-space: nowrap;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid var(--glass-border);
   font-size: 0.78rem;
@@ -473,16 +586,18 @@ a:hover {
   transform: translateY(-1px);
 }
 
-/* Open App — gradient primary */
+/* Open App — solid primary (no gradient) */
 .actions button:last-child {
-  color: #fff;
-  background: linear-gradient(135deg, var(--primary), #a855f7);
-  box-shadow: 0 4px 20px rgba(99, 102, 241, 0.25);
+  color: var(--bg);
+  background: var(--text-main);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
 }
 
 .actions button:last-child:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 28px rgba(99, 102, 241, 0.4);
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 4px 20px rgba(129, 140, 248, 0.3);
 }
 
 /* ===== Utility ===== */
@@ -492,22 +607,6 @@ a:hover {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
-}
-
-/* ===== Subtle ambient glow ===== */
-body::before {
-  content: "";
-  position: fixed;
-  top: -30%;
-  left: -20%;
-  width: 140%;
-  height: 140%;
-  background:
-    radial-gradient(ellipse at 30% 20%, rgba(99, 102, 241, 0.06), transparent 50%),
-    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.04), transparent 50%);
-  pointer-events: none;
-  z-index: -1;
-  transition: background 0.3s ease;
 }
 
 /* ===== Light theme overrides ===== */
@@ -521,8 +620,27 @@ body::before {
   background: rgba(0, 0, 0, 0.03);
 }
 
+:root[data-theme="light"] .actions button:last-child {
+  color: #fff;
+  background: var(--text-main);
+}
+
+:root[data-theme="light"] .actions button:last-child:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
 :root[data-theme="light"] .setting-row input {
   background: rgba(0, 0, 0, 0.03);
+}
+
+:root[data-theme="light"] .setting-row button {
+  background: var(--text-main);
+  color: #fff;
+}
+
+:root[data-theme="light"] .setting-row button:hover {
+  background: var(--primary);
 }
 
 :root[data-theme="light"] .sources a {
@@ -534,16 +652,9 @@ body::before {
   background: rgba(0, 0, 0, 0.07);
 }
 
-:root[data-theme="light"] body::before {
-  background:
-    radial-gradient(ellipse at 30% 20%, rgba(99, 102, 241, 0.08), transparent 50%),
-    radial-gradient(ellipse at 70% 80%, rgba(168, 85, 247, 0.06), transparent 50%);
-}
-
 /* Theme toggle button */
 .topbar-actions {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-
