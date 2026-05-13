@@ -10,11 +10,8 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <!-- Animated Cloud Background — mirrors main app's mystical clouds -->
-    <div class="cloud-bg" aria-hidden="true">
-      <span class="cloud-layer-1"></span>
-      <span class="cloud-layer-2"></span>
-    </div>
+    <!-- Mystical Cloud Canvas — same animation as the main app -->
+    <canvas id="cloud-canvas" class="cloud-canvas" aria-hidden="true"></canvas>
 
     <main class="shell">
       <header class="topbar">
@@ -87,6 +84,7 @@
         </button>
       </footer>
     </main>
+    <script src="cloud.js"></script>
     <script src="popup.js"></script>
   </body>
 </html>

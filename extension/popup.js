@@ -181,6 +181,12 @@ async function runCheck() {
     showError(error.message || "Could not complete the check.");
   } finally {
     elements.loadingCard.classList.add("hidden");
+
+    // Disperse the cloud back to ambient
+    if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
+      mysticalCloud.setIntensity(false);
+      mysticalCloud.setLoadingState(false);
+    }
   }
 }
 
@@ -339,6 +345,12 @@ function setLoading(text) {
   elements.loadingText.textContent = text;
   elements.loadingCard.classList.remove("hidden");
   elements.statusText.textContent = text;
+
+  // Intensify the mystical cloud during loading
+  if (typeof mysticalCloud !== "undefined" && mysticalCloud) {
+    mysticalCloud.setIntensity(true);
+    mysticalCloud.setLoadingState(true);
+  }
 }
 
 function clearResults() {
