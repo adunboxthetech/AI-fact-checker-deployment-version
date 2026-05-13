@@ -15,6 +15,7 @@ const elements = {
   resultCard: document.getElementById("resultCard"),
   retryBtn: document.getElementById("retryBtn"),
   openAppBtn: document.getElementById("openAppBtn"),
+  actionButtons: document.getElementById("actionButtons"),
   themeToggle: document.getElementById("themeToggle"),
   moonIcon: document.getElementById("moonIcon"),
   sunIcon: document.getElementById("sunIcon")
@@ -149,6 +150,7 @@ function normalizeApiBase(value) {
 }
 
 async function runCheck() {
+  elements.actionButtons.classList.add("hidden");
   setLoading("Finding the visible post...");
   clearResults();
 
@@ -262,6 +264,7 @@ function renderPostPreview(post) {
 function renderResults(data) {
   elements.resultCard.innerHTML = "";
   elements.resultCard.classList.remove("hidden");
+  elements.actionButtons.classList.remove("hidden");
 
   const results = Array.isArray(data.fact_check_results) ? data.fact_check_results : [];
   if (!results.length) {
@@ -460,6 +463,7 @@ function showError(message) {
   disperseThoughtBubbles();
   elements.resultCard.innerHTML = "";
   elements.resultCard.classList.remove("hidden");
+  elements.actionButtons.classList.remove("hidden");
   const error = document.createElement("div");
   error.className = "error";
   error.textContent = friendlyError(message);
