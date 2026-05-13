@@ -62,12 +62,11 @@ button, input { font: inherit; }
   min-height: 520px;
   border-radius: 16px;
   overflow: hidden;
-  background: transparent !important;
+  background: var(--bg);
   color: var(--text-main);
   position: relative;
-  transition: color 0.3s ease;
-  /* Removed outer glow and shadow to keep the wrapper completely invisible */
-  box-shadow: none;
+  transition: background-color 0.3s ease, color 0.3s ease;
+  box-shadow: 0 0 0 1px var(--glass-border), 0 8px 40px rgba(0,0,0,0.5);
 }
 
 /* ===== Cloud Canvas ===== */
@@ -528,7 +527,7 @@ a:hover {
   background: rgba(0, 0, 0, 0.07);
 }
 :root[data-theme="light"] .popup-wrapper {
-  box-shadow: none;
+  box-shadow: 0 0 0 1px var(--glass-border), 0 8px 40px rgba(0,0,0,0.15);
 }
 
 .topbar-actions {
