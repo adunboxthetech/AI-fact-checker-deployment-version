@@ -159,13 +159,13 @@ class MysticalCloud {
         const uvX = x / W;
         const uvY = y / H;
 
-        // Centered UV (aspect-corrected x)
+        // Centered UV (aspect-corrected x), shifted slightly lower to 0.65
         let cuvX = (uvX - 0.5) * aspect;
-        let cuvY = uvY - 0.5;
+        let cuvY = uvY - 0.65;
 
-        // Rotated UV (for loading vortex)
+        // Rotated UV (for loading vortex), pivoting around 0.65
         const ruvX = mix(uvX, cuvX * cosR - cuvY * sinR + 0.5, loadingState);
-        const ruvY = mix(uvY, cuvX * sinR + cuvY * cosR + 0.5, loadingState);
+        const ruvY = mix(uvY, cuvX * sinR + cuvY * cosR + 0.65, loadingState);
 
         // Multilayer noise (same octaves as the shader)
         const n1 = snoise(ruvX * 1.5 + t,          ruvY * 1.5 + t * 0.5);
@@ -190,14 +190,14 @@ class MysticalCloud {
         fG = mix(fG, col3G, s2);
         fB = mix(fB, col3B, s2);
 
-        // Ambient mask: dense at bottom, fading up
-        // Note: canvas y=0 is top, shader fragCoord.y=0 is bottom
-        const fragY = (H - 1 - y) / H;
-        let ambientMask = smoothstep(0.8, 0.0, fragY);
-        ambientMask = Math.pow(ambientMask, 1.5) * (n * 0.5 + 0.5);
-
-        // Loading mask: circular in the center
+        // Distance from the new center
         const dist = Math.sqrt(cuvX * cuvX + cuvY * cuvY);
+
+        // Ambient mask: soft, spread-out cloud centered around cuvY
+        let ambientMask = smoothstep(0.60, 0.15, dist);
+        ambientMask = Math.pow(ambientMask, 1.3) * (n * 0.6 + 0.4);
+
+        // Loading mask: tighter circular vortex
         let loadingMask = smoothstep(0.35, 0.05, dist);
         loadingMask = Math.pow(loadingMask, 1.2) * (n * 0.7 + 0.3);
 

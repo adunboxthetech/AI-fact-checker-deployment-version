@@ -353,12 +353,12 @@ const bubbleMessages = [
 // Positions in the LOWER half of the popup (55-75% height range)
 // so they never overlap the post card at the top.
 const bubblePositions = [
-  { top: "56%", right: "12%", cls: "pos-top-right" },
-  { top: "62%", left: "8%",  cls: "pos-left" },
-  { top: "58%", left: "30%", cls: "pos-top-left" },
-  { top: "68%", right: "8%", cls: "pos-right" },
-  { top: "64%", left: "15%", cls: "pos-bottom-left" },
-  { top: "60%", right: "20%", cls: "pos-bottom-right" }
+  { top: "68%", right: "12%", cls: "pos-top-right" },
+  { top: "74%", left: "8%",  cls: "pos-left" },
+  { top: "70%", left: "30%", cls: "pos-top-left" },
+  { top: "80%", right: "8%", cls: "pos-right" },
+  { top: "76%", left: "15%", cls: "pos-bottom-left" },
+  { top: "72%", right: "20%", cls: "pos-bottom-right" }
 ];
 
 let bubbleIndex = 0;
