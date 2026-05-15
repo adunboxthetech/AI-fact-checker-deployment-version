@@ -1978,6 +1978,8 @@ class FactChecker:
             "If it's a short statement or a direct claim, extract it directly. "
             "Do not infer, assume, or use outside knowledge. "
             "Do not generate claims about people/entities unless directly asserted in the text. "
+            "CRITICAL: Preserve the EXACT original wording of all names, entities, and proper nouns from the text. "
+            "Never truncate or split multi-word names (e.g., 'Claude Monet' must stay 'Claude Monet', not become 'Claude'). "
             "Return ONLY a numbered list. If there are absolutely no factual claims or premises, reply with EXACTLY 'NONE'.\n\n"
             "Text: {text}"
         ).format(max_claims=max_claims, text=clipped)
@@ -2115,6 +2117,9 @@ class FactChecker:
             "If it's a short statement or a direct claim, fact-check it directly. "
             "Use your internal knowledge to verify the claims to the best of your ability. "
             "Do NOT refuse to answer by saying you cannot browse the internet or access current data; provide the best fact-check based on your existing knowledge. "
+            "CRITICAL: When extracting claims, preserve the EXACT original wording of ALL names, entities, and proper nouns from the text. "
+            "Never truncate, shorten, or split multi-word names. For example, 'Claude Monet' must remain 'Claude Monet' and NOT be shortened to 'Claude'. "
+            "'Elon Musk' must NOT become 'Elon'. A claim about one entity must not be confused with a different entity that shares a partial name. "
             "Return ONLY JSON with this exact shape: "
             '{"claims":[{"claim":"...","verdict":"TRUE|FALSE|PARTIALLY TRUE|INSUFFICIENT EVIDENCE|UNVERIFIABLE",'
             '"confidence":85,"explanation":"2-3 sentences","sources":["https://..."]}]}. '
@@ -2260,6 +2265,9 @@ class FactChecker:
             f"Today's date is {current_date}. You are a careful fact-checking editor. "
             "Re-check each claim using the provided public web evidence snippets. "
             "Prefer independent reporting, official sources, and primary documents over the original social post. "
+            "CRITICAL: Verify that each claim accurately represents what the original text actually stated. "
+            "Watch for partial name matches — e.g., evidence about 'Claude' (an AI model) does NOT verify a claim about 'Claude Monet' (a painter), and vice versa. "
+            "If the claim text appears to have been incorrectly extracted (names truncated, entities confused), mark it FALSE or UNVERIFIABLE, not TRUE. "
             "If the evidence supports the claim, mark TRUE. If it contradicts the claim, mark FALSE or PARTIALLY TRUE. "
             "If the evidence is weak, missing, circular, or only repeats the same social post, mark INSUFFICIENT EVIDENCE. "
             "Use only URLs that appear in the evidence list as sources. "
